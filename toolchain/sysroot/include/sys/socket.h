@@ -92,6 +92,32 @@ struct cmsghdr {
 #define MSG_WAITALL     0x100
 #define MSG_CMSG_CLOEXEC 0x40000000
 
+/* SCM types for control messages */
+#define SCM_RIGHTS      1
+#define SCM_CREDENTIALS 2
+
+/* CMSG macros */
+#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
+#define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#define CMSG_LEN(len)   (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_DATA(cmsg)  ((unsigned char *)((struct cmsghdr *)(cmsg) + 1))
+#define CMSG_FIRSTHDR(mhdr) \
+    ((mhdr)->msg_controllen >= sizeof(struct cmsghdr) \
+     ? (struct cmsghdr *)(mhdr)->msg_control : (struct cmsghdr *)0)
+#define CMSG_NXTHDR(mhdr, cmsg) \
+    ((cmsg)->cmsg_len < sizeof(struct cmsghdr) ? (struct cmsghdr *)0 : \
+     ((unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len) + sizeof(struct cmsghdr) \
+      > (unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen) \
+     ? (struct cmsghdr *)0 \
+     : (struct cmsghdr *)((unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len)))
+
+/* ucred for SCM_CREDENTIALS */
+struct ucred {
+    pid_t pid;
+    uid_t uid;
+    gid_t gid;
+};
+
 /* Shutdown */
 #define SHUT_RD     0
 #define SHUT_WR     1

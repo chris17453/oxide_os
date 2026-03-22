@@ -30,6 +30,9 @@ pub struct FILE {
     eof: i32,
     buf_mode: i32,
     ungetc_buf: i32, // -1 if empty
+    /// — PulseForge: Stream orientation per C99/POSIX. 0 = unset, >0 = wide, <0 = byte.
+    /// Once set (by fwide or first I/O op), cannot be changed until freopen.
+    pub orientation: i32,
 }
 
 const FILE_FLAG_READ: u32 = 1;
@@ -53,6 +56,7 @@ static mut FILE_POOL: [FILE; MAX_OPEN_FILES] = {
         eof: 0,
         buf_mode: _IOFBF,
         ungetc_buf: -1,
+        orientation: 0,
     };
     [EMPTY; MAX_OPEN_FILES]
 };
@@ -68,6 +72,7 @@ static mut STDIN_FILE: FILE = FILE {
     eof: 0,
     buf_mode: _IOLBF,
     ungetc_buf: -1,
+    orientation: 0,
 };
 
 static mut STDOUT_FILE: FILE = FILE {
@@ -80,6 +85,7 @@ static mut STDOUT_FILE: FILE = FILE {
     eof: 0,
     buf_mode: _IOLBF,
     ungetc_buf: -1,
+    orientation: 0,
 };
 
 static mut STDERR_FILE: FILE = FILE {
@@ -92,6 +98,7 @@ static mut STDERR_FILE: FILE = FILE {
     eof: 0,
     buf_mode: _IONBF,
     ungetc_buf: -1,
+    orientation: 0,
 };
 
 fn alloc_file() -> *mut FILE {

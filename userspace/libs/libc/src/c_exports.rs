@@ -700,9 +700,13 @@ pub unsafe extern "C" fn raise(sig: i32) -> i32 {
     syscall::sys_kill(pid, sig)
 }
 
+/// signal — install a signal handler. Returns previous handler or SIG_ERR.
+/// — GhostPatch: Real implementation. Calls sys_sigaction (syscall 13) with
+/// SA_RESTORER pointing to __oxide_sigreturn trampoline. Previous versions
+/// returned 0 and ignored the handler — that's gone. Signals work now.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn signal(_signum: i32, handler: usize) -> usize {
-    0 // SIG_DFL - stub
+pub unsafe extern "C" fn signal(signum: i32, handler: usize) -> usize {
+    crate::signal::signal(signum, handler as u64) as usize
 }
 
 #[unsafe(no_mangle)]
@@ -745,14 +749,19 @@ pub unsafe extern "C" fn sigismember(set: *const u64, signum: i32) -> i32 {
     ((*set >> (signum - 1)) & 1) as i32
 }
 
+/// sigaction — examine and change signal action. Real syscall, not a stub.
+/// — GhostPatch: Calls rt_sigaction (syscall 13). The userspace SigAction struct
+/// must match the kernel's layout: sa_handler(u64), sa_flags(u64), sa_restorer(u64), sa_mask(u64).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sigaction(_signum: i32, _act: *const u8, _oldact: *mut u8) -> i32 {
-    0 // stub
+pub unsafe extern "C" fn sigaction(signum: i32, act: *const u8, oldact: *mut u8) -> i32 {
+    crate::syscall::sys_sigaction(signum, act, oldact)
 }
 
+/// sigprocmask — examine and change blocked signals. Real syscall.
+/// — GhostPatch: Calls rt_sigprocmask (syscall 14). SIG_BLOCK/UNBLOCK/SETMASK.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sigprocmask(_how: i32, _set: *const u64, _oldset: *mut u64) -> i32 {
-    0 // stub
+pub unsafe extern "C" fn sigprocmask(how: i32, set: *const u64, oldset: *mut u64) -> i32 {
+    crate::syscall::sys_sigprocmask(how, set, oldset)
 }
 
 // ============ unistd wrappers ============
@@ -8525,72 +8534,330 @@ pub extern "C" fn msgctl(msqid: i32, cmd: i32, buf: *mut core::ffi::c_void) -> i
 }
 
 // ============ iconv — character set conversion ============
-// — PulseForge: Minimal iconv for glib. Since OXIDE is UTF-8 everywhere,
-// most conversions are identity transforms. We support UTF-8 ↔ UTF-8 and
-// ASCII ↔ UTF-8 (identity), and return EINVAL for unknown encodings.
+// — PulseForge: Real charset conversion. Tracks the from/to encoding pair
+// in the conversion descriptor and performs actual transcoding.
+// Supported encodings: UTF-8, ASCII, ISO-8859-1 (Latin-1), UTF-16LE, UTF-16BE,
+// UTF-32LE, UTF-32BE, US-ASCII. glib uses these for text processing.
+
+/// Conversion direction IDs — encoded in the descriptor pointer.
+/// Low byte = from, high byte = to.
+const ENC_UTF8: u8 = 1;
+const ENC_ASCII: u8 = 2;
+const ENC_LATIN1: u8 = 3;
+const ENC_UTF16LE: u8 = 4;
+const ENC_UTF16BE: u8 = 5;
+const ENC_UTF32LE: u8 = 6;
+const ENC_UTF32BE: u8 = 7;
+
+fn parse_encoding_name(name: *const u8) -> Option<u8> {
+    if name.is_null() { return None; }
+    let mut len = 0;
+    while unsafe { *name.add(len) } != 0 && len < 32 { len += 1; }
+    let s = unsafe { core::slice::from_raw_parts(name, len) };
+    // — PulseForge: Case-insensitive match with common aliases
+    let upper: [u8; 32] = {
+        let mut buf = [0u8; 32];
+        for (i, &b) in s.iter().enumerate().take(32) {
+            buf[i] = if b >= b'a' && b <= b'z' { b - 32 } else { b };
+        }
+        buf
+    };
+    let u = &upper[..len];
+    if u == b"UTF-8" || u == b"UTF8" { return Some(ENC_UTF8); }
+    if u == b"ASCII" || u == b"US-ASCII" || u == b"ANSI_X3.4-1968" { return Some(ENC_ASCII); }
+    if u == b"ISO-8859-1" || u == b"LATIN1" || u == b"ISO8859-1" || u == b"ISO_8859-1" { return Some(ENC_LATIN1); }
+    if u == b"UTF-16LE" || u == b"UTF16LE" { return Some(ENC_UTF16LE); }
+    if u == b"UTF-16BE" || u == b"UTF16BE" { return Some(ENC_UTF16BE); }
+    if u == b"UTF-16" { return Some(ENC_UTF16BE); } // Default UTF-16 is BE
+    if u == b"UTF-32LE" || u == b"UTF32LE" || u == b"UCS-4LE" { return Some(ENC_UTF32LE); }
+    if u == b"UTF-32BE" || u == b"UTF32BE" || u == b"UCS-4BE" { return Some(ENC_UTF32BE); }
+    if u == b"UTF-32" || u == b"UCS-4" { return Some(ENC_UTF32BE); }
+    None
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iconv_open(_tocode: *const u8, _fromcode: *const u8) -> *mut u8 {
-    // — PulseForge: Return a non-NULL, non-error handle. (void*)-1 is error.
-    // We use a static dummy as the "conversion descriptor" since all our
-    // conversions are identity (UTF-8 everywhere).
-    1 as *mut u8 // Dummy non-NULL handle
+pub unsafe extern "C" fn iconv_open(tocode: *const u8, fromcode: *const u8) -> *mut u8 {
+    let from = match parse_encoding_name(fromcode) {
+        Some(e) => e,
+        None => { ERRNO_VAR = errno::EINVAL; return usize::MAX as *mut u8; } // (iconv_t)-1
+    };
+    let to = match parse_encoding_name(tocode) {
+        Some(e) => e,
+        None => { ERRNO_VAR = errno::EINVAL; return usize::MAX as *mut u8; }
+    };
+    // — PulseForge: Encode from/to in the descriptor pointer value.
+    // Not a real pointer — just (to << 8 | from) cast to void*. No heap allocation.
+    ((to as usize) << 8 | (from as usize)) as *mut u8
+}
+
+/// Decode one UTF-8 character, return (codepoint, bytes_consumed)
+fn utf8_decode(src: &[u8]) -> Option<(u32, usize)> {
+    if src.is_empty() { return None; }
+    let b0 = src[0];
+    if b0 & 0x80 == 0 { return Some((b0 as u32, 1)); }
+    if b0 & 0xE0 == 0xC0 && src.len() >= 2 {
+        let cp = ((b0 as u32 & 0x1F) << 6) | (src[1] as u32 & 0x3F);
+        return Some((cp, 2));
+    }
+    if b0 & 0xF0 == 0xE0 && src.len() >= 3 {
+        let cp = ((b0 as u32 & 0x0F) << 12) | ((src[1] as u32 & 0x3F) << 6) | (src[2] as u32 & 0x3F);
+        return Some((cp, 3));
+    }
+    if b0 & 0xF8 == 0xF0 && src.len() >= 4 {
+        let cp = ((b0 as u32 & 0x07) << 18) | ((src[1] as u32 & 0x3F) << 12) |
+                 ((src[2] as u32 & 0x3F) << 6) | (src[3] as u32 & 0x3F);
+        return Some((cp, 4));
+    }
+    None // Invalid UTF-8
+}
+
+/// Encode a Unicode codepoint to UTF-8, return bytes written
+fn utf8_encode(cp: u32, dst: &mut [u8]) -> Option<usize> {
+    if cp <= 0x7F && dst.len() >= 1 {
+        dst[0] = cp as u8; Some(1)
+    } else if cp <= 0x7FF && dst.len() >= 2 {
+        dst[0] = 0xC0 | (cp >> 6) as u8;
+        dst[1] = 0x80 | (cp & 0x3F) as u8;
+        Some(2)
+    } else if cp <= 0xFFFF && dst.len() >= 3 {
+        dst[0] = 0xE0 | (cp >> 12) as u8;
+        dst[1] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+        dst[2] = 0x80 | (cp & 0x3F) as u8;
+        Some(3)
+    } else if cp <= 0x10FFFF && dst.len() >= 4 {
+        dst[0] = 0xF0 | (cp >> 18) as u8;
+        dst[1] = 0x80 | ((cp >> 12) & 0x3F) as u8;
+        dst[2] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+        dst[3] = 0x80 | (cp & 0x3F) as u8;
+        Some(4)
+    } else {
+        None
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iconv(
-    _cd: *mut u8,
+    cd: *mut u8,
     inbuf: *mut *mut u8,
     inbytesleft: *mut usize,
     outbuf: *mut *mut u8,
     outbytesleft: *mut usize,
 ) -> usize {
-    // — PulseForge: Identity conversion — copy bytes 1:1. This works for
-    // UTF-8 → UTF-8 (glib's most common case) and ASCII → UTF-8.
+    // Reset request (NULL inbuf = reset state)
     if inbuf.is_null() || unsafe { (*inbuf).is_null() } {
-        return 0; // Reset state (no-op for stateless UTF-8)
+        return 0; // Stateless encodings — no state to reset
     }
 
-    let in_ptr = unsafe { *inbuf };
-    let in_left = unsafe { *inbytesleft };
-    let out_ptr = unsafe { *outbuf };
-    let out_left = unsafe { *outbytesleft };
+    let desc = cd as usize;
+    let from_enc = (desc & 0xFF) as u8;
+    let to_enc = ((desc >> 8) & 0xFF) as u8;
 
-    let copy_len = in_left.min(out_left);
-    if copy_len > 0 {
-        unsafe {
-            core::ptr::copy_nonoverlapping(in_ptr, out_ptr, copy_len);
-            *inbuf = in_ptr.add(copy_len);
-            *inbytesleft = in_left - copy_len;
-            *outbuf = out_ptr.add(copy_len);
-            *outbytesleft = out_left - copy_len;
-        }
+    let mut in_ptr = unsafe { *inbuf };
+    let mut in_left = unsafe { *inbytesleft };
+    let mut out_ptr = unsafe { *outbuf };
+    let mut out_left = unsafe { *outbytesleft };
+    let mut irreversible = 0usize;
+
+    // — PulseForge: Convert one character at a time through Unicode codepoint.
+    // from_enc → codepoint → to_enc
+    while in_left > 0 {
+        // Step 1: Decode one codepoint from input
+        let in_slice = unsafe { core::slice::from_raw_parts(in_ptr, in_left) };
+        let (codepoint, consumed) = match from_enc {
+            ENC_UTF8 => match utf8_decode(in_slice) {
+                Some(r) => r,
+                None => { ERRNO_VAR = errno::EILSEQ; break; }
+            },
+            ENC_ASCII => {
+                if in_slice[0] > 0x7F {
+                    ERRNO_VAR = errno::EILSEQ;
+                    break;
+                }
+                (in_slice[0] as u32, 1)
+            },
+            ENC_LATIN1 => (in_slice[0] as u32, 1), // Latin-1 = Unicode U+0000..U+00FF
+            ENC_UTF16LE => {
+                if in_left < 2 { ERRNO_VAR = errno::EINVAL; break; }
+                let w = (in_slice[0] as u16) | ((in_slice[1] as u16) << 8);
+                if w >= 0xD800 && w <= 0xDBFF && in_left >= 4 {
+                    // Surrogate pair
+                    let w2 = (in_slice[2] as u16) | ((in_slice[3] as u16) << 8);
+                    let cp = 0x10000 + ((w as u32 - 0xD800) << 10) + (w2 as u32 - 0xDC00);
+                    (cp, 4)
+                } else {
+                    (w as u32, 2)
+                }
+            },
+            ENC_UTF16BE => {
+                if in_left < 2 { ERRNO_VAR = errno::EINVAL; break; }
+                let w = ((in_slice[0] as u16) << 8) | (in_slice[1] as u16);
+                if w >= 0xD800 && w <= 0xDBFF && in_left >= 4 {
+                    let w2 = ((in_slice[2] as u16) << 8) | (in_slice[3] as u16);
+                    let cp = 0x10000 + ((w as u32 - 0xD800) << 10) + (w2 as u32 - 0xDC00);
+                    (cp, 4)
+                } else {
+                    (w as u32, 2)
+                }
+            },
+            ENC_UTF32LE => {
+                if in_left < 4 { ERRNO_VAR = errno::EINVAL; break; }
+                let cp = (in_slice[0] as u32) | ((in_slice[1] as u32) << 8) |
+                         ((in_slice[2] as u32) << 16) | ((in_slice[3] as u32) << 24);
+                (cp, 4)
+            },
+            ENC_UTF32BE => {
+                if in_left < 4 { ERRNO_VAR = errno::EINVAL; break; }
+                let cp = ((in_slice[0] as u32) << 24) | ((in_slice[1] as u32) << 16) |
+                         ((in_slice[2] as u32) << 8) | (in_slice[3] as u32);
+                (cp, 4)
+            },
+            _ => { ERRNO_VAR = errno::EINVAL; return usize::MAX; }
+        };
+
+        // Step 2: Encode codepoint to output
+        let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_left) };
+        let written = match to_enc {
+            ENC_UTF8 => match utf8_encode(codepoint, out_slice) {
+                Some(n) => n,
+                None => { ERRNO_VAR = 7; break; } // E2BIG
+            },
+            ENC_ASCII => {
+                if codepoint > 0x7F {
+                    irreversible += 1;
+                    if out_left < 1 { ERRNO_VAR = 7; break; }
+                    out_slice[0] = b'?'; // Replacement character
+                    1
+                } else {
+                    if out_left < 1 { ERRNO_VAR = 7; break; }
+                    out_slice[0] = codepoint as u8;
+                    1
+                }
+            },
+            ENC_LATIN1 => {
+                if codepoint > 0xFF {
+                    irreversible += 1;
+                    if out_left < 1 { ERRNO_VAR = 7; break; }
+                    out_slice[0] = b'?';
+                    1
+                } else {
+                    if out_left < 1 { ERRNO_VAR = 7; break; }
+                    out_slice[0] = codepoint as u8;
+                    1
+                }
+            },
+            ENC_UTF16LE => {
+                if codepoint <= 0xFFFF {
+                    if out_left < 2 { ERRNO_VAR = 7; break; }
+                    let w = codepoint as u16;
+                    out_slice[0] = w as u8;
+                    out_slice[1] = (w >> 8) as u8;
+                    2
+                } else {
+                    if out_left < 4 { ERRNO_VAR = 7; break; }
+                    let cp = codepoint - 0x10000;
+                    let hi = (0xD800 + (cp >> 10)) as u16;
+                    let lo = (0xDC00 + (cp & 0x3FF)) as u16;
+                    out_slice[0] = hi as u8; out_slice[1] = (hi >> 8) as u8;
+                    out_slice[2] = lo as u8; out_slice[3] = (lo >> 8) as u8;
+                    4
+                }
+            },
+            ENC_UTF16BE => {
+                if codepoint <= 0xFFFF {
+                    if out_left < 2 { ERRNO_VAR = 7; break; }
+                    let w = codepoint as u16;
+                    out_slice[0] = (w >> 8) as u8;
+                    out_slice[1] = w as u8;
+                    2
+                } else {
+                    if out_left < 4 { ERRNO_VAR = 7; break; }
+                    let cp = codepoint - 0x10000;
+                    let hi = (0xD800 + (cp >> 10)) as u16;
+                    let lo = (0xDC00 + (cp & 0x3FF)) as u16;
+                    out_slice[0] = (hi >> 8) as u8; out_slice[1] = hi as u8;
+                    out_slice[2] = (lo >> 8) as u8; out_slice[3] = lo as u8;
+                    4
+                }
+            },
+            ENC_UTF32LE => {
+                if out_left < 4 { ERRNO_VAR = 7; break; }
+                out_slice[0] = codepoint as u8;
+                out_slice[1] = (codepoint >> 8) as u8;
+                out_slice[2] = (codepoint >> 16) as u8;
+                out_slice[3] = (codepoint >> 24) as u8;
+                4
+            },
+            ENC_UTF32BE => {
+                if out_left < 4 { ERRNO_VAR = 7; break; }
+                out_slice[0] = (codepoint >> 24) as u8;
+                out_slice[1] = (codepoint >> 16) as u8;
+                out_slice[2] = (codepoint >> 8) as u8;
+                out_slice[3] = codepoint as u8;
+                4
+            },
+            _ => { ERRNO_VAR = errno::EINVAL; return usize::MAX; }
+        };
+
+        // Advance pointers
+        in_ptr = unsafe { in_ptr.add(consumed) };
+        in_left -= consumed;
+        out_ptr = unsafe { out_ptr.add(written) };
+        out_left -= written;
     }
 
-    if unsafe { *inbytesleft } > 0 {
-        // Output buffer too small
-        ERRNO_VAR = 7; // E2BIG
-        return usize::MAX; // (size_t)-1
+    // Update caller's pointers
+    unsafe {
+        *inbuf = in_ptr;
+        *inbytesleft = in_left;
+        *outbuf = out_ptr;
+        *outbytesleft = out_left;
     }
 
-    0 // Success, 0 non-reversible conversions
+    if in_left > 0 && ERRNO_VAR == 0 {
+        ERRNO_VAR = 7; // E2BIG — output buffer full
+        return usize::MAX;
+    }
+
+    irreversible
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iconv_close(_cd: *mut u8) -> i32 {
+    // No heap allocation to free — descriptor is encoded in pointer value
     0
 }
 
 // ============ Additional POSIX functions for glib/GTK ============
 
+/// — PulseForge: Quick exit handler registry. C11 requires at least 32 handlers.
+/// Stored in a static array, executed in LIFO order by quick_exit().
+static mut QUICK_EXIT_HANDLERS: [Option<extern "C" fn()>; 32] = [None; 32];
+static mut QUICK_EXIT_COUNT: usize = 0;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn quick_exit(status: i32) -> ! {
+    // — PulseForge: Execute all registered handlers in reverse order (LIFO)
+    unsafe {
+        let count = QUICK_EXIT_COUNT;
+        for i in (0..count).rev() {
+            if let Some(func) = QUICK_EXIT_HANDLERS[i] {
+                func();
+            }
+        }
+    }
     crate::syscall::sys_exit(status);
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn at_quick_exit(_func: extern "C" fn()) -> i32 {
-    0 // Accept but don't actually register
+pub unsafe extern "C" fn at_quick_exit(func: extern "C" fn()) -> i32 {
+    unsafe {
+        if QUICK_EXIT_COUNT >= 32 {
+            return -1; // No space
+        }
+        QUICK_EXIT_HANDLERS[QUICK_EXIT_COUNT] = Some(func);
+        QUICK_EXIT_COUNT += 1;
+    }
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -8621,7 +8888,397 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
     -1
 }
 
+/// fwide — set/query stream orientation. Per C99: once set, cannot be changed.
+/// mode > 0: try to set wide. mode < 0: try to set byte. mode == 0: query only.
+/// Returns: >0 if wide, <0 if byte, 0 if unset.
+/// — PulseForge: Real implementation using FILE.orientation field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fwide(_stream: *mut u8, _mode: i32) -> i32 {
+pub unsafe extern "C" fn fwide(stream: *mut u8, mode: i32) -> i32 {
+    if stream.is_null() {
+        return 0;
+    }
+    let file = stream as *mut crate::filestream::FILE;
+    unsafe {
+        let current = (*file).orientation;
+        if current != 0 {
+            return current; // Already set — cannot change
+        }
+        if mode != 0 {
+            (*file).orientation = if mode > 0 { 1 } else { -1 };
+            return (*file).orientation;
+        }
+        0 // Unset, query only
+    }
+}
+
+// ============ DNS resolver — libresolv interface ============
+// — ShadePacket: Real DNS resolution via our dns.rs module. Builds a query,
+// sends it to the DNS server over UDP, returns the raw response. This is
+// what glib's GResolver calls to do hostname resolution.
+
+/// res_query — send a DNS query and return the raw response.
+/// — ShadePacket: Uses the real DNS client in dns.rs. Builds query packet,
+/// sends via UDP to configured DNS server, copies raw response to answer buf.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn res_query(
+    dname: *const u8, class: i32, qtype: i32,
+    answer: *mut u8, anslen: i32,
+) -> i32 {
+    use crate::dns;
+    use crate::socket::{af, sock, ipproto, socket, sendto, recvfrom, sockaddr_in_octets,
+                         SockAddrIn, SOCKADDR_IN_SIZE};
+    use crate::unistd::close;
+
+    if dname.is_null() || answer.is_null() || anslen <= 0 {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+
+    // Parse dname C string
+    let mut name_len = 0;
+    while unsafe { *dname.add(name_len) } != 0 && name_len < 255 {
+        name_len += 1;
+    }
+    let name_bytes = unsafe { core::slice::from_raw_parts(dname, name_len) };
+    let name_str = match core::str::from_utf8(name_bytes) {
+        Ok(s) => s,
+        Err(_) => { ERRNO_VAR = errno::EINVAL; return -1; }
+    };
+
+    // Get DNS server
+    let server = dns::get_primary_dns_server();
+
+    // Create UDP socket
+    let fd = socket(af::INET, sock::DGRAM, ipproto::UDP);
+    if fd < 0 {
+        ERRNO_VAR = errno::EIO;
+        return -1;
+    }
+
+    // Build query packet
+    let mut query = [0u8; 512];
+    let query_len = dns::build_query_raw(name_str, qtype as u16, class as u16, &mut query);
+
+    // Send query
+    let dest = sockaddr_in_octets(dns::DNS_PORT, server.0, server.1, server.2, server.3);
+    let sent = sendto(fd, &query[..query_len], 0, &dest, SOCKADDR_IN_SIZE);
+    if sent < 0 {
+        close(fd);
+        ERRNO_VAR = errno::EIO;
+        return -1;
+    }
+
+    // Receive response into caller's buffer
+    let answer_slice = unsafe { core::slice::from_raw_parts_mut(answer, anslen as usize) };
+    let mut src_addr = SockAddrIn::default();
+    let mut src_len = SOCKADDR_IN_SIZE;
+    let received = recvfrom(fd, answer_slice, 0, Some(&mut src_addr), Some(&mut src_len));
+    close(fd);
+
+    if received < 0 {
+        ERRNO_VAR = errno::EIO;
+        return -1;
+    }
+
+    received as i32
+}
+
+/// res_search — like res_query but appends search domains from resolv.conf.
+/// — ShadePacket: For now, delegates to res_query. Full implementation would
+/// try dname as-is, then with each search domain appended.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn res_search(
+    dname: *const u8, class: i32, qtype: i32,
+    answer: *mut u8, anslen: i32,
+) -> i32 {
+    // Try the name as-is first (res_query handles full resolution)
+    unsafe { res_query(dname, class, qtype, answer, anslen) }
+}
+
+/// res_init — initialize the resolver. Reads /etc/resolv.conf.
+/// — ShadePacket: Our dns.rs reads resolv.conf on every query (no caching of
+/// resolver state). This is a no-op since there's no persistent _res struct.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn res_init() -> i32 {
+    0 // resolv.conf is read fresh on each query — no initialization needed
+}
+
+/// res_mkquery — build a DNS query packet.
+/// — ShadePacket: Wraps dns.rs build_query_raw(). Returns query length in bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn res_mkquery(
+    _op: i32, dname: *const u8, class: i32, qtype: i32,
+    _data: *const u8, _datalen: i32, _newrr: *const u8,
+    buf: *mut u8, buflen: i32,
+) -> i32 {
+    if dname.is_null() || buf.is_null() || buflen <= 0 {
+        return -1;
+    }
+
+    let mut name_len = 0;
+    while unsafe { *dname.add(name_len) } != 0 && name_len < 255 {
+        name_len += 1;
+    }
+    let name_bytes = unsafe { core::slice::from_raw_parts(dname, name_len) };
+    let name_str = match core::str::from_utf8(name_bytes) {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+
+    let buf_slice = unsafe { core::slice::from_raw_parts_mut(buf, buflen as usize) };
+    crate::dns::build_query_raw(name_str, qtype as u16, class as u16, buf_slice) as i32
+}
+
+/// dn_expand — expand a compressed DNS domain name.
+/// — ShadePacket: Walks the DNS name from comp_dn, following compression pointers
+/// (0xC0 prefix), writing the expanded dot-separated name to exp_dn.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dn_expand(
+    msg: *const u8, eomorig: *const u8, comp_dn: *const u8,
+    exp_dn: *mut u8, length: i32,
+) -> i32 {
+    if msg.is_null() || eomorig.is_null() || comp_dn.is_null() || exp_dn.is_null() || length <= 0 {
+        return -1;
+    }
+
+    let msg_start = msg as usize;
+    let msg_end = eomorig as usize;
+    let msg_len = msg_end - msg_start;
+    let msg_slice = unsafe { core::slice::from_raw_parts(msg, msg_len) };
+
+    let start_offset = (comp_dn as usize) - msg_start;
+    let mut pos = start_offset;
+    let mut out_pos = 0;
+    let max_out = (length - 1) as usize; // Leave room for NUL
+    let mut jumped = false;
+    let mut consumed = 0; // Bytes consumed from the original position (before any jumps)
+
+    loop {
+        if pos >= msg_len {
+            return -1;
+        }
+
+        let label_len = msg_slice[pos] as usize;
+
+        if label_len == 0 {
+            // End of name
+            if !jumped {
+                consumed = (pos + 1) - start_offset;
+            }
+            break;
+        }
+
+        if label_len & 0xC0 == 0xC0 {
+            // Compression pointer — two bytes form a 14-bit offset
+            if pos + 1 >= msg_len {
+                return -1;
+            }
+            if !jumped {
+                consumed = (pos + 2) - start_offset;
+            }
+            let offset = ((label_len & 0x3F) << 8) | (msg_slice[pos + 1] as usize);
+            pos = offset;
+            jumped = true;
+            continue;
+        }
+
+        if label_len > 63 {
+            return -1; // Invalid label length
+        }
+
+        // Copy label
+        if out_pos > 0 && out_pos < max_out {
+            unsafe { *exp_dn.add(out_pos) = b'.'; }
+            out_pos += 1;
+        }
+
+        for i in 0..label_len {
+            if pos + 1 + i >= msg_len || out_pos >= max_out {
+                return -1;
+            }
+            unsafe { *exp_dn.add(out_pos) = msg_slice[pos + 1 + i]; }
+            out_pos += 1;
+        }
+
+        pos += 1 + label_len;
+        if !jumped {
+            consumed = pos - start_offset;
+        }
+    }
+
+    // NUL-terminate
+    unsafe { *exp_dn.add(out_pos) = 0; }
+
+    consumed as i32
+}
+
+/// ns_initparse — initialize a DNS message parser.
+/// — ShadePacket: Parses the fixed header and stores state for ns_parserr iteration.
+/// The ns_msg handle stores: message pointer, length, section counts, current offsets.
+#[repr(C)]
+struct NsMsg {
+    msg: *const u8,
+    msg_len: i32,
+    id: u16,
+    flags: u16,
+    counts: [u16; 4], // QD, AN, NS, AR
+    sections_offset: [usize; 4],
+    current_section: i32,
+    current_rrnum: i32,
+    current_pos: usize,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ns_initparse(
+    msg: *const u8, msglen: i32, handle: *mut u8,
+) -> i32 {
+    if msg.is_null() || handle.is_null() || msglen < 12 {
+        return -1;
+    }
+
+    let h = handle as *mut NsMsg;
+    let m = unsafe { core::slice::from_raw_parts(msg, msglen as usize) };
+
+    unsafe {
+        (*h).msg = msg;
+        (*h).msg_len = msglen;
+        (*h).id = ((m[0] as u16) << 8) | (m[1] as u16);
+        (*h).flags = ((m[2] as u16) << 8) | (m[3] as u16);
+        (*h).counts[0] = ((m[4] as u16) << 8) | (m[5] as u16); // QDCOUNT
+        (*h).counts[1] = ((m[6] as u16) << 8) | (m[7] as u16); // ANCOUNT
+        (*h).counts[2] = ((m[8] as u16) << 8) | (m[9] as u16); // NSCOUNT
+        (*h).counts[3] = ((m[10] as u16) << 8) | (m[11] as u16); // ARCOUNT
+
+        // Walk to find section offsets
+        let mut pos = 12usize;
+
+        // Question section
+        (*h).sections_offset[0] = pos;
+        for _ in 0..(*h).counts[0] {
+            // Skip QNAME
+            while pos < msglen as usize {
+                let len = m[pos] as usize;
+                if len == 0 { pos += 1; break; }
+                if len & 0xC0 == 0xC0 { pos += 2; break; }
+                pos += 1 + len;
+            }
+            pos += 4; // QTYPE + QCLASS
+        }
+
+        // Answer, Authority, Additional sections start here
+        (*h).sections_offset[1] = pos;
+        (*h).sections_offset[2] = pos; // Will be adjusted as we parse
+        (*h).sections_offset[3] = pos;
+
+        (*h).current_section = -1;
+        (*h).current_rrnum = 0;
+        (*h).current_pos = pos;
+    }
+
     0
 }
+
+/// DNS RR record parsed by ns_parserr
+#[repr(C)]
+struct NsRr {
+    name: [u8; 256],
+    rr_type: u16,
+    rr_class: u16,
+    ttl: u32,
+    rdlength: u16,
+    rdata: *const u8,
+}
+
+/// ns_parserr — parse the next resource record from a DNS message.
+/// — ShadePacket: Iterates through answer/authority/additional sections.
+/// Each call advances the position and fills in the ns_rr struct.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ns_parserr(
+    handle: *mut u8, section: i32, rrnum: i32, rr: *mut u8,
+) -> i32 {
+    if handle.is_null() || rr.is_null() {
+        return -1;
+    }
+
+    let h = handle as *mut NsMsg;
+    let r = rr as *mut NsRr;
+
+    let sect = section as usize;
+    if sect > 3 {
+        return -1;
+    }
+
+    unsafe {
+        let msg = core::slice::from_raw_parts((*h).msg, (*h).msg_len as usize);
+        let count = (*h).counts[sect] as i32;
+
+        if rrnum >= count {
+            return -1;
+        }
+
+        // If switching to a new section or rewinding, reset position
+        if section != (*h).current_section || rrnum < (*h).current_rrnum {
+            (*h).current_pos = (*h).sections_offset[sect.min(1)]; // Start from answer section
+            (*h).current_rrnum = 0;
+            (*h).current_section = section;
+        }
+
+        // Skip to the requested rrnum
+        while (*h).current_rrnum < rrnum {
+            let pos = (*h).current_pos;
+            if pos >= msg.len() { return -1; }
+            // Skip name
+            let mut p = pos;
+            loop {
+                if p >= msg.len() { return -1; }
+                let len = msg[p] as usize;
+                if len == 0 { p += 1; break; }
+                if len & 0xC0 == 0xC0 { p += 2; break; }
+                p += 1 + len;
+            }
+            p += 10; // TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2)
+            if p > msg.len() { return -1; }
+            let rdlen = ((msg[p - 2] as usize) << 8) | (msg[p - 1] as usize);
+            p += rdlen;
+            (*h).current_pos = p;
+            (*h).current_rrnum += 1;
+        }
+
+        // Now parse the RR at current_pos
+        let pos = (*h).current_pos;
+        if pos >= msg.len() { return -1; }
+
+        // Expand name
+        let expanded = dn_expand(
+            (*h).msg, (*h).msg.add((*h).msg_len as usize),
+            (*h).msg.add(pos), (*r).name.as_mut_ptr(), 256,
+        );
+        if expanded < 0 { return -1; }
+
+        let mut p = pos;
+        // Skip name in wire format
+        loop {
+            if p >= msg.len() { return -1; }
+            let len = msg[p] as usize;
+            if len == 0 { p += 1; break; }
+            if len & 0xC0 == 0xC0 { p += 2; break; }
+            p += 1 + len;
+        }
+
+        if p + 10 > msg.len() { return -1; }
+
+        (*r).rr_type = ((msg[p] as u16) << 8) | (msg[p + 1] as u16);
+        (*r).rr_class = ((msg[p + 2] as u16) << 8) | (msg[p + 3] as u16);
+        (*r).ttl = ((msg[p + 4] as u32) << 24) | ((msg[p + 5] as u32) << 16) |
+                   ((msg[p + 6] as u32) << 8) | (msg[p + 7] as u32);
+        (*r).rdlength = ((msg[p + 8] as u16) << 8) | (msg[p + 9] as u16);
+        (*r).rdata = (*h).msg.add(p + 10);
+
+        // Advance past this RR
+        (*h).current_pos = p + 10 + (*r).rdlength as usize;
+        (*h).current_rrnum = rrnum + 1;
+    }
+
+    0
+}
+

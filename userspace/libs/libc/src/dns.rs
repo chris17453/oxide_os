@@ -61,8 +61,19 @@ impl Default for ResolvedAddr {
     }
 }
 
-/// Build DNS query packet
+/// Build DNS query packet (public for res_query/res_mkquery)
+/// — ShadePacket: Exposed as build_query_raw for libresolv compatibility.
+/// Takes explicit qclass parameter (build_query always uses IN).
+pub fn build_query_raw(hostname: &str, qtype: u16, qclass: u16, buf: &mut [u8]) -> usize {
+    build_query_impl(hostname, qtype, qclass, buf)
+}
+
+/// Build DNS query packet (internal, always uses class IN)
 fn build_query(hostname: &str, qtype: u16, buf: &mut [u8]) -> usize {
+    build_query_impl(hostname, qtype, DNS_CLASS_IN, buf)
+}
+
+fn build_query_impl(hostname: &str, qtype: u16, qclass: u16, buf: &mut [u8]) -> usize {
     let mut pos = 0;
 
     // Transaction ID (use simple value, could be randomized)
@@ -120,9 +131,9 @@ fn build_query(hostname: &str, qtype: u16, buf: &mut [u8]) -> usize {
     buf[pos + 1] = (qtype & 0xFF) as u8;
     pos += 2;
 
-    // QCLASS = IN
-    buf[pos] = 0;
-    buf[pos + 1] = 1;
+    // QCLASS (parameter — IN=1 for standard queries)
+    buf[pos] = (qclass >> 8) as u8;
+    buf[pos + 1] = (qclass & 0xFF) as u8;
     pos += 2;
 
     pos
