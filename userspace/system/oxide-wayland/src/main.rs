@@ -576,8 +576,8 @@ impl Compositor {
         // This tells the kernel compositor "don't draw text on this VT,
         // I'm handling pixels directly." The kernel still blits our VFB
         // to hardware — we just own the pixel content now.
-        let tty_path = b"/dev/tty\0";
-        let tty_fd = unsafe { syscall3(2, tty_path.as_ptr() as usize, 2, 0) } as i32;
+        let tty_path = b"/dev/tty";
+        let tty_fd = unsafe { syscall4(2, tty_path.as_ptr() as usize, tty_path.len(), 2, 0) } as i32;
         if tty_fd >= 0 {
             // KDSETMODE = 0x4B3A, KD_GRAPHICS = 0x01
             let ret = unsafe { syscall3(16, tty_fd as usize, 0x4B3A, 1) };
@@ -591,8 +591,8 @@ impl Compositor {
         // — NeonVale: Step 2: Open /dev/fb0 — our VT's virtual framebuffer.
         // Each VT has its own backing buffer. The kernel compositor blits
         // VFBs to hardware at ~100Hz. We write pixels, kernel handles display.
-        let fb_path = b"/dev/fb0\0";
-        let fb_fd = unsafe { syscall3(2, fb_path.as_ptr() as usize, 2, 0) } as i32;
+        let fb_path = b"/dev/fb0";
+        let fb_fd = unsafe { syscall4(2, fb_path.as_ptr() as usize, fb_path.len(), 2, 0) } as i32;
         if fb_fd < 0 {
             write_str(1, "[WAYLAND] Warning: /dev/fb0 not available (err=");
             // Print error number
