@@ -220,6 +220,18 @@ int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id);
 
 int pthread_once(pthread_once_t *once_control, void (*init_routine)(void));
 
+/* ===== Thread Cancellation ===== */
+int pthread_cancel(pthread_t thread);
+int pthread_setcancelstate(int state, int *oldstate);
+int pthread_setcanceltype(int type, int *oldtype);
+void pthread_testcancel(void);
+
+/* ===== Timed Mutex ===== */
+int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *abstime);
+
+/* ===== Scheduling ===== */
+int sched_yield(void);
+
 #ifdef __cplusplus
 }
 #endif

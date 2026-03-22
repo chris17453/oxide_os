@@ -24,6 +24,10 @@
 #define INFINITY    __builtin_inff()
 #define NAN         __builtin_nanf("")
 
+/* IEEE 754 type aliases required by C99/C++ <cmath> */
+typedef double double_t;
+typedef float float_t;
+
 /* Classification macros */
 #define FP_NAN       0
 #define FP_INFINITE  1
@@ -74,6 +78,12 @@ float tanhf(float x);
 float asinhf(float x);
 float acoshf(float x);
 float atanhf(float x);
+long double sinhl(long double x);
+long double coshl(long double x);
+long double tanhl(long double x);
+long double asinhl(long double x);
+long double acoshl(long double x);
+long double atanhl(long double x);
 
 /* Exponential and logarithmic */
 double exp(double x);
@@ -90,6 +100,9 @@ float logf(float x);
 float log2f(float x);
 float log10f(float x);
 float log1pf(float x);
+long double exp2l(long double x);
+long double expm1l(long double x);
+long double log1pl(long double x);
 
 /* Power */
 double pow(double x, double y);
@@ -100,6 +113,8 @@ float powf(float x, float y);
 float sqrtf(float x);
 float cbrtf(float x);
 float hypotf(float x, float y);
+long double cbrtl(long double x);
+long double hypotl(long double x, long double y);
 
 /* Rounding */
 double ceil(double x);
@@ -118,6 +133,16 @@ float truncf(float x);
 float roundf(float x);
 float nearbyintf(float x);
 float rintf(float x);
+long lrintf(float x);
+long long llrintf(float x);
+long lroundf(float x);
+long long llroundf(float x);
+long double nearbyintl(long double x);
+long double rintl(long double x);
+long lrintl(long double x);
+long long llrintl(long double x);
+long lroundl(long double x);
+long long llroundl(long double x);
 
 /* Remainder */
 double fmod(double x, double y);
@@ -125,6 +150,9 @@ double remainder(double x, double y);
 double remquo(double x, double y, int *quo);
 float fmodf(float x, float y);
 float remainderf(float x, float y);
+long double remainderl(long double x, long double y);
+long double fmodl(long double x, long double y);
+long double remquol(long double x, long double y, int *quo);
 
 /* Manipulation */
 double copysign(double x, double y);
@@ -141,6 +169,23 @@ float fdimf(float x, float y);
 float fmaxf(float x, float y);
 float fminf(float x, float y);
 float fmaf(float x, float y, float z);
+long double nextafterl(long double x, long double y);
+long double fdiml(long double x, long double y);
+long double fmaxl(long double x, long double y);
+long double fminl(long double x, long double y);
+long double fmal(long double x, long double y, long double z);
+double nexttoward(double x, long double y);
+float nexttowardf(float x, long double y);
+long double nexttowardl(long double x, long double y);
+long double scalbnl(long double x, int n);
+long double scalblnl(long double x, long n);
+int ilogbl(long double x);
+long double logbl(long double x);
+
+/* NaN generation */
+double nan(const char *tagp);
+float nanf(const char *tagp);
+long double nanl(const char *tagp);
 
 /* Decomposition */
 double frexp(double x, int *exp);
@@ -153,6 +198,11 @@ double logb(double x);
 float frexpf(float x, int *exp);
 float ldexpf(float x, int exp);
 float modff(float x, float *iptr);
+float scalbnf(float x, int n);
+float scalblnf(float x, long n);
+int ilogbf(float x);
+float logbf(float x);
+float remquof(float x, float y, int *quo);
 
 /* Error and gamma */
 double erf(double x);
@@ -161,6 +211,12 @@ double lgamma(double x);
 double tgamma(double x);
 float erff(float x);
 float erfcf(float x);
+long double erfl(long double x);
+long double erfcl(long double x);
+long double lgammal(long double x);
+long double tgammal(long double x);
+float lgammaf(float x);
+float tgammaf(float x);
 
 /* Long double versions (map to double) */
 long double fabsl(long double x);

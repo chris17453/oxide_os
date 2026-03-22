@@ -83,6 +83,9 @@ double wcstod(const wchar_t *nptr, wchar_t **endptr);
 float wcstof(const wchar_t *nptr, wchar_t **endptr);
 long double wcstold(const wchar_t *nptr, wchar_t **endptr);
 
+/* Stream orientation */
+int fwide(FILE *stream, int mode);
+
 /* Wide printf/scanf */
 int swprintf(wchar_t *s, size_t n, const wchar_t *format, ...);
 int vswprintf(wchar_t *s, size_t n, const wchar_t *format, va_list ap);
@@ -90,6 +93,12 @@ int fwprintf(FILE *stream, const wchar_t *format, ...);
 int wprintf(const wchar_t *format, ...);
 int vfwprintf(FILE *stream, const wchar_t *format, va_list ap);
 int vwprintf(const wchar_t *format, va_list ap);
+int wscanf(const wchar_t *format, ...);
+int fwscanf(FILE *stream, const wchar_t *format, ...);
+int swscanf(const wchar_t *s, const wchar_t *format, ...);
+int vwscanf(const wchar_t *format, va_list ap);
+int vfwscanf(FILE *stream, const wchar_t *format, va_list ap);
+int vswscanf(const wchar_t *s, const wchar_t *format, va_list ap);
 
 /* Time */
 size_t wcsftime(wchar_t *s, size_t maxsize, const wchar_t *format,

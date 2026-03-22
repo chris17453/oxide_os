@@ -11,6 +11,8 @@ void _exit(int status) __attribute__((noreturn));
 void _Exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
 int atexit(void (*function)(void));
+int at_quick_exit(void (*function)(void));
+void quick_exit(int status) __attribute__((noreturn));
 int on_exit(void (*function)(int, void *), void *arg);
 
 /* Memory allocation */
@@ -30,6 +32,8 @@ unsigned long strtoul(const char *nptr, char **endptr, int base);
 long long strtoll(const char *nptr, char **endptr, int base);
 unsigned long long strtoull(const char *nptr, char **endptr, int base);
 double strtod(const char *nptr, char **endptr);
+float strtof(const char *nptr, char **endptr);
+long double strtold(const char *nptr, char **endptr);
 
 /* Environment */
 char *getenv(const char *name);
@@ -68,6 +72,13 @@ int system(const char *command);
 char *mktemp(char *__tmpl);
 int mkstemp(char *__tmpl);
 char *mkdtemp(char *__tmpl);
+
+/* Multibyte/wide character conversion */
+int mblen(const char *s, size_t n);
+int mbtowc(wchar_t *pwc, const char *s, size_t n);
+int wctomb(char *s, wchar_t wc);
+size_t mbstowcs(wchar_t *dest, const char *src, size_t n);
+size_t wcstombs(char *dest, const wchar_t *src, size_t n);
 
 /* Realpath */
 char *realpath(const char *path, char *resolved_path);
