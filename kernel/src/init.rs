@@ -2132,7 +2132,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
 
         // Mount tmpfs on writable directories (initramfs is read-only)
-        let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
+        // — ShadePacket: /dev/shm for POSIX shm_open(). Wayland clients share pixel
+        // buffers through shm_open + mmap. /run/dbus for oxide-dbusd socket.
+        let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run", "/dev/shm", "/run/dbus"];
         for dir in &writable_dirs {
             let tmpfs = TmpDir::new_root();
             if let Err(e) = GLOBAL_VFS.mount(tmpfs, dir, MountFlags::empty(), "tmpfs") {
