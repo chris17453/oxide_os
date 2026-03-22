@@ -7944,6 +7944,119 @@ pub unsafe extern "C" fn getopt(argc: i32, argv: *const *const u8, optstring: *c
     crate::getopt::getopt_impl(argc, argv, optstring)
 }
 
+/// getopt_long — parse long command-line options (--name, --name=value)
+/// — NeonRoot: Real implementation. Checks argv for --name options matching
+/// the longopts array, handles required_argument/optional_argument, falls
+/// back to short getopt for single-dash options.
+#[repr(C)]
+struct COption {
+    name: *const u8,
+    has_arg: i32,
+    flag: *mut i32,
+    val: i32,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getopt_long(
+    argc: i32, argv: *const *const u8, optstring: *const u8,
+    longopts: *const COption, longindex: *mut i32,
+) -> i32 {
+    // Access optind via our getopt module
+    let optind_ptr = core::ptr::addr_of_mut!(crate::getopt::OPTIND);
+    let optarg_ptr = core::ptr::addr_of_mut!(crate::getopt::OPTARG);
+
+    let idx = unsafe { *optind_ptr } as usize;
+    if idx as i32 >= argc { return -1; }
+
+    let arg = unsafe { *argv.add(idx) };
+    if arg.is_null() { return -1; }
+
+    // Check for -- (end of options)
+    if unsafe { *arg == b'-' && *arg.add(1) == b'-' && *arg.add(2) == 0 } {
+        unsafe { *optind_ptr += 1; }
+        return -1;
+    }
+
+    // Check for --longopt
+    if unsafe { *arg == b'-' && *arg.add(1) == b'-' } {
+        let opt_start = unsafe { arg.add(2) };
+
+        // Find = sign (--name=value)
+        let mut eq_pos: usize = 0;
+        let mut has_eq = false;
+        while unsafe { *opt_start.add(eq_pos) } != 0 {
+            if unsafe { *opt_start.add(eq_pos) } == b'=' {
+                has_eq = true;
+                break;
+            }
+            eq_pos += 1;
+        }
+        let name_len = eq_pos;
+
+        // Search longopts array
+        if !longopts.is_null() {
+            let mut i = 0;
+            loop {
+                let opt = unsafe { &*longopts.add(i) };
+                if opt.name.is_null() { break; }
+
+                // Compare name
+                let mut match_len = 0;
+                let mut matches = true;
+                while match_len < name_len {
+                    let c1 = unsafe { *opt_start.add(match_len) };
+                    let c2 = unsafe { *opt.name.add(match_len) };
+                    if c2 == 0 || c1 != c2 { matches = false; break; }
+                    match_len += 1;
+                }
+                // Verify option name is exactly name_len chars
+                if matches && unsafe { *opt.name.add(name_len) } == 0 {
+                    // Found match
+                    if !longindex.is_null() { unsafe { *longindex = i as i32; } }
+                    unsafe { *optind_ptr += 1; }
+
+                    // Handle argument
+                    if opt.has_arg == 1 || opt.has_arg == 2 {
+                        // required_argument or optional_argument
+                        if has_eq {
+                            unsafe { *optarg_ptr = opt_start.add(eq_pos + 1) as *mut u8; }
+                        } else if opt.has_arg == 1 && (*optind_ptr as i32) < argc {
+                            // Next argv is the argument
+                            unsafe { *optarg_ptr = *argv.add(*optind_ptr as usize) as *mut u8; }
+                            unsafe { *optind_ptr += 1; }
+                        } else {
+                            unsafe { *optarg_ptr = core::ptr::null_mut(); }
+                        }
+                    }
+
+                    if !opt.flag.is_null() {
+                        unsafe { *opt.flag = opt.val; }
+                        return 0;
+                    }
+                    return opt.val;
+                }
+                i += 1;
+            }
+        }
+
+        // Unknown long option
+        unsafe { *optind_ptr += 1; }
+        return b'?' as i32;
+    }
+
+    // Not a long option — delegate to short getopt
+    crate::getopt::getopt_impl(argc, argv, optstring)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getopt_long_only(
+    argc: i32, argv: *const *const u8, optstring: *const u8,
+    longopts: *const COption, longindex: *mut i32,
+) -> i32 {
+    // Same as getopt_long for now
+    unsafe { getopt_long(argc, argv, optstring, longopts, longindex) }
+}
+
 // Termcap implementation for vim
 // Static storage for termcap strings and tgoto buffer
 static mut TERMCAP_STORAGE: [u8; 4096] = [0; 4096];

@@ -6,8 +6,8 @@
 use core::ptr;
 
 // Global state for getopt (required by POSIX specification)
-static mut OPTIND: i32 = 1; // Index of next argv element to process
-static mut OPTARG: *mut u8 = ptr::null_mut(); // Pointer to option argument
+pub static mut OPTIND: i32 = 1; // Index of next argv element to process
+pub static mut OPTARG: *mut u8 = ptr::null_mut(); // Pointer to option argument
 static mut OPTOPT: i32 = 0; // Last option character
 static mut OPTERR: i32 = 1; // Print error messages if nonzero
 static mut OPTP: *const u8 = ptr::null(); // Internal: current position in option
