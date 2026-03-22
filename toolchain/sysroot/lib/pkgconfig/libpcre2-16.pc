@@ -1,0 +1,9 @@
+prefix=/usr
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libpcre2-16
+Description: PCRE2 - Perl compatible regular expressions C library (2nd API) with 16 bit character support
+Version: 10.44
+Libs: -L${libdir} -lpcre2-16 -pthread
+Cflags: -I${includedir} -pthread

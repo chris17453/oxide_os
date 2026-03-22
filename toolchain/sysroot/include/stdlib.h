@@ -75,6 +75,7 @@ int system(const char *command);
 /* Temporary files */
 char *mktemp(char *__tmpl);
 int mkstemp(char *__tmpl);
+int mkostemp(char *__tmpl, int flags);
 char *mkdtemp(char *__tmpl);
 
 /* Multibyte/wide character conversion */

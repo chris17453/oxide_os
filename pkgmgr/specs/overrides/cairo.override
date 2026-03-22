@@ -6,10 +6,6 @@
 BUILD_SYSTEM="meson"
 
 CONFIGURE_FLAGS="
-  -Dxlib=disabled
-  -Dxcb=disabled
-  -Dquartz=disabled
-  -Dwin32=disabled
   -Dpng=enabled
   -Dfreetype=enabled
   -Dfontconfig=enabled
@@ -18,7 +14,6 @@ CONFIGURE_FLAGS="
   -Dspectre=disabled
   -Dsymbol-lookup=disabled
   -Dtests=disabled
-  -Dgtk2-utils=disabled
 "
 
 EXTRA_CFLAGS="-DOXIDE_OS -DCAIRO_NO_MUTEX"
