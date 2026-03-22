@@ -47,6 +47,8 @@ pub enum VfsError {
     /// — GraveShift: The ghost of EINTR haunts every blocking syscall. You wanted Unix semantics?
     /// You got Unix semantics. Welcome to the pain.
     Interrupted,
+    /// Socket not connected
+    NotConnected,
     /// Invalid operation for file type
     InvalidOperation,
     /// Invalid/unrecognized filesystem
@@ -79,6 +81,7 @@ impl VfsError {
             VfsError::BrokenPipe => -32,         // EPIPE
             VfsError::WouldBlock => -11,         // EAGAIN
             VfsError::Interrupted => -4,         // EINTR
+            VfsError::NotConnected => -107,      // ENOTCONN
             VfsError::InvalidOperation => -22,   // EINVAL
             VfsError::InvalidFilesystem => -22,  // EINVAL
             VfsError::CorruptedFilesystem => -5, // EIO
@@ -109,6 +112,7 @@ impl fmt::Display for VfsError {
             VfsError::BrokenPipe => write!(f, "Broken pipe"),
             VfsError::WouldBlock => write!(f, "Operation would block"),
             VfsError::Interrupted => write!(f, "Interrupted system call"),
+            VfsError::NotConnected => write!(f, "Transport endpoint is not connected"),
             VfsError::InvalidOperation => write!(f, "Invalid operation"),
             VfsError::InvalidFilesystem => write!(f, "Invalid filesystem"),
             VfsError::CorruptedFilesystem => write!(f, "Corrupted filesystem"),

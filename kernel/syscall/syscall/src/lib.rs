@@ -11,6 +11,7 @@ pub mod container;
 pub mod dir;
 pub mod event_io;
 pub mod firewall;
+pub mod ipc;
 pub mod memory;
 pub mod poll;
 pub mod security;
@@ -169,6 +170,26 @@ pub mod nr {
     // Scheduler / yield (24)
     // ========================================================================
     pub const SCHED_YIELD: u64 = 24;
+
+    // ========================================================================
+    // System V IPC — Shared Memory (29-31, 67)
+    // — ThreadRogue: cross-process shared memory segments
+    // ========================================================================
+    pub const SHMGET: u64 = 29;
+    pub const SHMAT: u64 = 30;
+    pub const SHMCTL: u64 = 31;
+    pub const SHMDT: u64 = 67;
+
+    // System V IPC — Semaphores (64-66)
+    pub const SEMGET: u64 = 64;
+    pub const SEMOP: u64 = 65;
+    pub const SEMCTL: u64 = 66;
+
+    // System V IPC — Message Queues (68-71)
+    pub const MSGGET: u64 = 68;
+    pub const MSGSND: u64 = 69;
+    pub const MSGRCV: u64 = 70;
+    pub const MSGCTL: u64 = 71;
 
     // ========================================================================
     // Sendfile (40)
@@ -446,7 +467,10 @@ pub mod errno {
     pub const EALREADY: i64 = -114; // Operation already in progress
     pub const EINPROGRESS: i64 = -115; // Operation now in progress
     pub const EPIPE: i64 = -32; // Broken pipe
+    pub const EMSGSIZE: i64 = -90; // Message too long
     pub const ENOPROTOOPT: i64 = -92; // Protocol not available
+    pub const EOPNOTSUPP: i64 = -95; // Operation not supported
+    pub const ENOTSUP: i64 = -95; // Not supported (alias for EOPNOTSUPP on Linux)
 }
 
 /// Console output callback type
@@ -733,6 +757,23 @@ pub fn dispatch(
         nr::GETPRIORITY => sys_getpriority(arg1 as i32, arg2 as i32),
         nr::SETPRIORITY => sys_setpriority(arg1 as i32, arg2 as i32, arg3 as i32),
 
+        // — ThreadRogue: System V shared memory syscalls
+        nr::SHMGET => shm::sys_shmget(arg1 as u32, arg2 as usize, arg3 as u32, 0, 0),
+        nr::SHMAT => ipc::sys_shmat(arg1 as u32, arg2, arg3 as u32),
+        nr::SHMCTL => shm::sys_shmctl(arg1 as u32, arg2 as u32, mm_manager::mm()),
+        nr::SHMDT => ipc::sys_shmdt(arg1),
+
+        // — ThreadRogue: System V semaphore syscalls
+        nr::SEMGET => shm::semaphore::sys_semget(arg1 as u32, arg2 as usize, arg3 as u32, 0, 0),
+        nr::SEMOP => shm::semaphore::sys_semop(arg1 as u32, arg2 as *const shm::semaphore::SemBuf, arg3 as usize),
+        nr::SEMCTL => shm::semaphore::sys_semctl(arg1 as u32, arg2 as u32, arg3 as u32, arg4),
+
+        // — ThreadRogue: System V message queue syscalls
+        nr::MSGGET => shm::msgqueue::sys_msgget(arg1 as u32, arg2 as u32, 0, 0),
+        nr::MSGSND => shm::msgqueue::sys_msgsnd(arg1 as u32, arg2 as *const u8, arg3 as usize, arg4 as u32),
+        nr::MSGRCV => shm::msgqueue::sys_msgrcv(arg1 as u32, arg2 as *mut u8, arg3 as usize, arg4 as i64, arg5 as u32),
+        nr::MSGCTL => shm::msgqueue::sys_msgctl(arg1 as u32, arg2 as u32),
+
         // Timer/alarm syscalls
         nr::ALARM => sys_alarm(arg1 as u32),
         nr::SETITIMER => sys_setitimer(arg1 as i32, arg2, arg3),
@@ -830,6 +871,8 @@ pub fn dispatch(
             arg5,
             arg6 as u32,
         ),
+        nr::SENDMSG => socket::sys_sendmsg(arg1 as i32, arg2, arg3 as i32),
+        nr::RECVMSG => socket::sys_recvmsg(arg1 as i32, arg2, arg3 as i32),
         nr::RECVFROM => {
             socket::sys_recvfrom(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6)
         }
@@ -1119,6 +1162,17 @@ fn syscall_name(num: u64) -> &'static str {
         nr::PIPE => "pipe",
         nr::SELECT => "select",
         nr::SCHED_YIELD => "sched_yield",
+        nr::SHMGET => "shmget",
+        nr::SHMAT => "shmat",
+        nr::SHMCTL => "shmctl",
+        nr::SHMDT => "shmdt",
+        nr::SEMGET => "semget",
+        nr::SEMOP => "semop",
+        nr::SEMCTL => "semctl",
+        nr::MSGGET => "msgget",
+        nr::MSGSND => "msgsnd",
+        nr::MSGRCV => "msgrcv",
+        nr::MSGCTL => "msgctl",
         nr::MREMAP => "mremap",
         nr::MADVISE => "madvise",
         nr::DUP => "dup",
@@ -1134,6 +1188,8 @@ fn syscall_name(num: u64) -> &'static str {
         nr::CONNECT => "connect",
         nr::ACCEPT => "accept",
         nr::SENDTO => "sendto",
+        nr::SENDMSG => "sendmsg",
+        nr::RECVMSG => "recvmsg",
         nr::RECVFROM => "recvfrom",
         nr::SHUTDOWN => "shutdown",
         nr::BIND => "bind",
@@ -2941,11 +2997,8 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
 }
 
 /// Futex operations
-mod futex_op {
-    pub const FUTEX_WAIT: i32 = 0;
-    pub const FUTEX_WAKE: i32 = 1;
-    pub const FUTEX_PRIVATE_FLAG: i32 = 128;
-}
+// — ThreadRogue: use the futex_op module from proc::futex
+use proc::futex::futex_op;
 
 /// sys_futex - Fast userspace mutex operations
 ///
@@ -2956,24 +3009,17 @@ mod futex_op {
 /// * `timeout` - Timeout for WAIT operations (nanoseconds, 0 = infinite)
 /// * `addr2` - Second address (for some operations)
 /// * `val3` - Third value (for some operations)
-fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, _addr2: u64, _val3: u32) -> i64 {
-    // Validate address
-    if addr == 0 || addr >= 0x0000_8000_0000_0000 {
-        return errno::EFAULT;
-    }
+fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, addr2: u64, val3: u32) -> i64 {
+    if addr == 0 || addr >= 0x0000_8000_0000_0000 { return errno::EFAULT; }
 
-    // Strip private flag for operation dispatch
     let op_masked = op & !futex_op::FUTEX_PRIVATE_FLAG;
 
     match op_masked {
         futex_op::FUTEX_WAIT => {
-            // Prepare for futex wait - adds us to wait queue if value matches
             let current = current_pid();
             match proc::futex_wait_prepare(current, addr, val) {
                 Ok(proc::FutexWaitResult::ValueMismatch) => errno::EAGAIN,
                 Ok(proc::FutexWaitResult::ShouldBlock) => {
-                    // Block the current task via scheduler
-                    // The scheduler will handle putting us to sleep
                     sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
                     0
                 }
@@ -2985,16 +3031,63 @@ fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, _addr2: u64, _val3: u32
             }
         }
         futex_op::FUTEX_WAKE => {
-            // Get list of PIDs to wake
             match proc::futex_wake(addr, val as i32) {
                 Ok(pids) => {
                     let count = pids.len();
-                    // Wake each process via scheduler
-                    for pid in pids {
-                        sched::wake_up(pid);
-                    }
+                    for pid in pids { sched::wake_up(pid); }
                     count as i64
                 }
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        // — ThreadRogue: FUTEX_WAIT_BITSET — wait with bitmask (val3 = bitset)
+        futex_op::FUTEX_WAIT_BITSET => {
+            let current = current_pid();
+            match proc::futex_wait_bitset_prepare(current, addr, val, val3) {
+                Ok(proc::FutexWaitResult::ValueMismatch) => errno::EAGAIN,
+                Ok(proc::FutexWaitResult::ShouldBlock) => {
+                    sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
+                    0
+                }
+                Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        // — ThreadRogue: FUTEX_WAKE_BITSET — wake with bitmask (val3 = bitset)
+        futex_op::FUTEX_WAKE_BITSET => {
+            match proc::futex_wake_bitset(addr, val as i32, val3) {
+                Ok(pids) => {
+                    let count = pids.len();
+                    for pid in pids { sched::wake_up(pid); }
+                    count as i64
+                }
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        // — ThreadRogue: FUTEX_REQUEUE — move waiters between queues
+        futex_op::FUTEX_REQUEUE => {
+            match proc::futex_requeue(addr, val as i32, addr2, timeout as i32) {
+                Ok(pids) => {
+                    let count = pids.len();
+                    for pid in pids { sched::wake_up(pid); }
+                    count as i64
+                }
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        // — ThreadRogue: FUTEX_CMP_REQUEUE — compare + requeue (race-safe)
+        futex_op::FUTEX_CMP_REQUEUE => {
+            match proc::futex_cmp_requeue(addr, val as i32, addr2, timeout as i32, val3) {
+                Ok(pids) => {
+                    let count = pids.len();
+                    for pid in pids { sched::wake_up(pid); }
+                    count as i64
+                }
+                Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
                 Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
                 Err(_) => errno::EINVAL,
             }
@@ -3110,11 +3203,18 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
     };
 
     // Read param from userspace
+    // — BlackLatch: SchedParam from user pointer — alignment is a luxury
+    // userspace doesn't afford us. copy_nonoverlapping reads clean.
     let param: SchedParam = unsafe {
         os_core::user_access_begin();
-        let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
+        let mut p = core::mem::MaybeUninit::<SchedParam>::uninit();
+        core::ptr::copy_nonoverlapping(
+            param_ptr as *const u8,
+            p.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<SchedParam>(),
+        );
         os_core::user_access_end();
-        p
+        p.assume_init()
     };
 
     // Validate priority for RT policies
@@ -3174,12 +3274,18 @@ fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
         return errno::ESRCH;
     }
 
-    // Read param from userspace
+    // — BlackLatch: sched_setparam user pointer read — alignment-safe.
+    // copy_nonoverlapping doesn't flinch at misaligned SchedParam.
     let param: SchedParam = unsafe {
         os_core::user_access_begin();
-        let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
+        let mut p = core::mem::MaybeUninit::<SchedParam>::uninit();
+        core::ptr::copy_nonoverlapping(
+            param_ptr as *const u8,
+            p.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<SchedParam>(),
+        );
         os_core::user_access_end();
-        p
+        p.assume_init()
     };
 
     // Get current policy

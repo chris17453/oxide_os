@@ -19,6 +19,23 @@ use crate::{with_current_meta, with_current_meta_mut};
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
 
+/// — ShadePacket: Get an Arc<File> from the current process's FdTable by fd number.
+/// Used by AF_UNIX socket dispatch to check if an fd is a Unix socket vnode.
+pub fn get_file_from_fd(fd: i32) -> Option<Arc<vfs::File>> {
+    with_current_meta(|meta| meta.fd_table.get_file(fd))
+        .flatten()
+}
+
+/// — ShadePacket: Install an Arc<File> into the current process's FdTable.
+/// Returns the new fd number or negative errno. Used by AF_UNIX socket creation.
+pub fn alloc_fd_for_file(file: Arc<vfs::File>) -> i64 {
+    match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => e.to_errno() as i64,
+        None => errno::ENOMEM,
+    }
+}
+
 /// Resolve a path against the current process's working directory
 ///
 /// If path is absolute (starts with /), normalizes and returns it.
@@ -1232,9 +1249,14 @@ pub fn sys_statfs(path_ptr: u64, path_len: usize, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
+        // — SableWire: Statfs to user memory — alignment is never guaranteed.
+        // copy_nonoverlapping writes clean bytes, no alignment panic.
         os_core::user_access_begin();
-        let dest = buf_ptr as *mut Statfs;
-        core::ptr::write_volatile(dest, statfs);
+        core::ptr::copy_nonoverlapping(
+            &statfs as *const Statfs as *const u8,
+            buf_ptr as *mut u8,
+            core::mem::size_of::<Statfs>(),
+        );
         os_core::user_access_end();
     }
 
@@ -1289,9 +1311,14 @@ pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
+        // — SableWire: Statfs to user memory — alignment is never guaranteed.
+        // copy_nonoverlapping writes clean bytes, no alignment panic.
         os_core::user_access_begin();
-        let dest = buf_ptr as *mut Statfs;
-        core::ptr::write_volatile(dest, statfs);
+        core::ptr::copy_nonoverlapping(
+            &statfs as *const Statfs as *const u8,
+            buf_ptr as *mut u8,
+            core::mem::size_of::<Statfs>(),
+        );
         os_core::user_access_end();
     }
 

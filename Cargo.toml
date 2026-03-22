@@ -50,6 +50,7 @@ members = [
     "kernel/fs/fat32",
     "kernel/fs/ext4",
     "kernel/net/net",
+    "kernel/net/unix",
     "kernel/net/tcpip",
     "kernel/net/dhcp",
     "kernel/net/dns",
@@ -109,6 +110,7 @@ members = [
     "kernel/tty/vkbd",
     "kernel/signal/signal",
     "kernel/smp/smp",
+    "kernel/ipc/shm",
     "kernel/acpi/acpi",
     "kernel/module/module",
     # libs — shared crates (kernel + userspace)
@@ -118,6 +120,9 @@ members = [
     "userspace/system/login",
     "userspace/system/passwd",
     "userspace/system/servicemgr",
+    "userspace/system/ld-oxide",
+    "userspace/system/dyntest",
+    "userspace/system/su",
     # userspace/shell
     "userspace/shell",
     # userspace/coreutils
@@ -223,6 +228,7 @@ vt = { path = "kernel/tty/vt" }
 compositor = { path = "kernel/tty/compositor" }
 vkbd = { path = "kernel/tty/vkbd" }
 signal = { path = "kernel/signal/signal" }
+shm = { path = "kernel/ipc/shm" }
 smp = { path = "kernel/smp/smp" }
 acpi = { path = "kernel/acpi/acpi" }
 module = { path = "kernel/module/module" }
@@ -235,6 +241,7 @@ oxidefs = { path = "kernel/fs/oxidefs" }
 fat32 = { path = "kernel/fs/fat32" }
 ext4 = { path = "kernel/fs/ext4" }
 net = { path = "kernel/net/net" }
+unix-socket = { path = "kernel/net/unix" }
 tcpip = { path = "kernel/net/tcpip" }
 dhcp = { path = "kernel/net/dhcp" }
 dns = { path = "kernel/net/dns" }

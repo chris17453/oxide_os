@@ -14,7 +14,7 @@ heap-hardening = ["mm-heap/heap-hardening"]
 
 # — SableWire: Architecture selection (mutually exclusive).
 # Makefile auto-passes arch-$(ARCH) — never set these by hand.
-arch-x86_64 = ["dep:arch-x86_64"]
+arch-x86_64 = ["dep:arch-x86_64", "proc/arch-x86_64"]
 arch-aarch64 = ["dep:arch-aarch64"]
 arch-mips64 = ["dep:arch-mips64"]
 
@@ -93,6 +93,7 @@ tty = { workspace = true }
 pty = { workspace = true }
 vt = { workspace = true }
 net = { workspace = true }
+unix-socket = { workspace = true }
 tcpip = { workspace = true }
 dhcp = { workspace = true }
 virtio-net = { workspace = true }

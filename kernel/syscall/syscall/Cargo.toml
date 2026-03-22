@@ -22,6 +22,7 @@ mm-vma = { path = "../../mm/mm-vma" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }
+unix-socket = { path = "../../net/unix" }
 tcpip = { path = "../../net/tcpip" }
 dhcp = { path = "../../net/dhcp" }
 input = { path = "../../input/input" }
@@ -39,4 +40,5 @@ sched-traits = { path = "../../sched/sched-traits" }
 waitqueue = { path = "../../core/waitqueue" }
 module = { path = "../../module/module" }
 driver-core = { path = "../../drivers/driver-core" }
+shm = { path = "../../ipc/shm" }
 spin = { workspace = true }

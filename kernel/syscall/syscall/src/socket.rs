@@ -21,6 +21,15 @@ use net::{
 };
 use tcpip; // ShadePacket: Network stack polling for packet reception
 
+// — ShadePacket: AF_UNIX support — the neon underground of IPC
+use unix_socket::{
+    self, UnixAddr, UnixError, UnixSocket, UnixSocketType,
+    ancillary::{self, CmsgData},
+    vnode::UnixSocketVnode,
+};
+use vfs::file::{File, FileFlags};
+use vfs::vnode::VnodeOps;
+
 /// Socket file descriptor offset (to distinguish from file FDs)
 const SOCKET_FD_BASE: i32 = 1000;
 
@@ -388,6 +397,154 @@ fn loopback_send(socket: &Arc<Socket>, data: &[u8], dest: &SocketAddr) -> i64 {
 }
 
 // ============================================================================
+// AF_UNIX HELPERS
+// ============================================================================
+
+/// — ShadePacket: Get current task credentials for socket peer identification.
+fn current_ucred() -> unix_socket::UCred {
+    // Get PID from scheduler
+    let pid = unsafe {
+        unsafe extern "Rust" {
+            fn sched_current_pid() -> Option<u32>;
+        }
+        sched_current_pid().unwrap_or(0)
+    };
+    // — ShadePacket: UID/GID from process meta. For now, root (0,0) since
+    // OXIDE doesn't have multi-user yet. When it does, pull from ProcessMeta.
+    unix_socket::UCred { pid, uid: 0, gid: 0 }
+}
+
+/// — ShadePacket: Try to extract a UnixSocketVnode from a VFS file descriptor.
+/// Returns None if the fd doesn't exist or isn't a Unix socket.
+fn get_unix_socket_from_fd(fd: i32) -> Option<Arc<UnixSocket>> {
+    // Look up in the current process's FdTable via VFS
+    let file = crate::vfs::get_file_from_fd(fd)?;
+    let vnode = file.vnode();
+    let any = vnode.as_any();
+    // Downcast to UnixSocketVnode
+    any.downcast_ref::<UnixSocketVnode>().map(|v| Arc::clone(v.socket()))
+}
+
+/// — ShadePacket: Check if fd is an AF_UNIX socket in the VFS FdTable.
+fn is_unix_socket_fd(fd: i32) -> bool {
+    get_unix_socket_from_fd(fd).is_some()
+}
+
+/// — ShadePacket: Parse sockaddr_un from userspace memory.
+/// Linux layout: { u16 sun_family; char sun_path[108]; }
+fn parse_sockaddr_un(addr: u64, addrlen: u32) -> Option<UnixAddr> {
+    if addrlen < 2 {
+        return None;
+    }
+
+    let len = (addrlen as usize).min(110); // 2 + 108
+    let raw = uaccess::copy_from_user(addr, len).ok()?;
+
+    let family = u16::from_ne_bytes([raw[0], raw[1]]);
+    if family != 1 {
+        // AF_UNIX
+        return None;
+    }
+
+    if addrlen <= 2 {
+        return Some(UnixAddr::Unnamed);
+    }
+
+    let path_bytes = &raw[2..];
+    if path_bytes.is_empty() {
+        return Some(UnixAddr::Unnamed);
+    }
+
+    if path_bytes[0] == 0 {
+        // Abstract namespace — sun_path[0] == '\0', rest is the name
+        let name = path_bytes[1..].to_vec();
+        Some(UnixAddr::Abstract(name))
+    } else {
+        // Filesystem path — NUL-terminated string
+        let end = path_bytes.iter().position(|&b| b == 0).unwrap_or(path_bytes.len());
+        let path_str = core::str::from_utf8(&path_bytes[..end]).ok()?;
+        Some(UnixAddr::Path(alloc::string::String::from(path_str)))
+    }
+}
+
+/// — ShadePacket: Write sockaddr_un to userspace memory.
+fn write_sockaddr_un(addr: u64, addrlen: u64, unix_addr: &UnixAddr) -> i64 {
+    if addr == 0 {
+        return 0;
+    }
+
+    let mut raw = [0u8; 110]; // 2 + 108
+    raw[0] = 1; // AF_UNIX low byte
+    raw[1] = 0; // AF_UNIX high byte
+
+    let total_len = match unix_addr {
+        UnixAddr::Path(path) => {
+            let bytes = path.as_bytes();
+            let copy_len = bytes.len().min(108);
+            raw[2..2 + copy_len].copy_from_slice(&bytes[..copy_len]);
+            2 + copy_len + 1 // include NUL terminator
+        }
+        UnixAddr::Abstract(name) => {
+            raw[2] = 0; // NUL prefix
+            let copy_len = name.len().min(107);
+            raw[3..3 + copy_len].copy_from_slice(&name[..copy_len]);
+            3 + copy_len
+        }
+        UnixAddr::Unnamed => 2,
+    };
+
+    let write_len = total_len.min(110);
+    if uaccess::copy_to_user(addr, &raw[..write_len]).is_err() {
+        return errno::EFAULT;
+    }
+
+    // Write addrlen
+    if addrlen != 0 {
+        let len_val = (write_len as u32).to_ne_bytes();
+        if uaccess::copy_to_user(addrlen, &len_val).is_err() {
+            return errno::EFAULT;
+        }
+    }
+
+    0
+}
+
+/// Map UnixError to errno
+fn unix_error_to_errno(e: UnixError) -> i64 {
+    match e {
+        UnixError::AlreadyBound => errno::EINVAL,
+        UnixError::AddrInUse => errno::EADDRINUSE,
+        UnixError::WrongType => errno::EOPNOTSUPP,
+        UnixError::NotBound => errno::EINVAL,
+        UnixError::NotListening => errno::EINVAL,
+        UnixError::NotConnected => errno::ENOTCONN,
+        UnixError::ConnectionRefused => errno::ECONNREFUSED,
+        UnixError::BrokenPipe => errno::EPIPE,
+        UnixError::WouldBlock => errno::EAGAIN,
+        UnixError::InvalidArg => errno::EINVAL,
+        UnixError::NoBufferSpace => errno::ENOBUFS,
+        UnixError::AddrNotFound => errno::ECONNREFUSED,
+        UnixError::MsgTooLong => errno::EMSGSIZE,
+        UnixError::Internal => errno::EIO,
+    }
+}
+
+/// — ShadePacket: Install a UnixSocket into the current process's VFS FdTable.
+/// Returns the new fd number or negative errno.
+fn install_unix_socket_fd(socket: Arc<UnixSocket>, nonblock: bool, cloexec: bool) -> i64 {
+    let vnode: Arc<dyn VnodeOps> = Arc::new(UnixSocketVnode::new(socket));
+    let mut flags = FileFlags::O_RDWR;
+    if nonblock {
+        flags |= FileFlags::O_NONBLOCK;
+    }
+    if cloexec {
+        flags |= FileFlags::O_CLOEXEC;
+    }
+    let file = Arc::new(File::new(vnode, flags));
+    crate::vfs::alloc_fd_for_file(file)
+}
+
+// ============================================================================
 // SYSCALL IMPLEMENTATIONS
 // ============================================================================
 
@@ -401,16 +558,37 @@ fn loopback_send(socket: &Arc<Socket>, data: &[u8], dest: &SocketAddr) -> i64 {
 /// # Returns
 /// Socket file descriptor or negative errno
 pub fn sys_socket(domain: i32, sock_type: i32, protocol: i32) -> i64 {
-    // Parse domain
+    let nonblock = sock_type & 0x800 != 0;
+    let cloexec = sock_type & 0x80000 != 0;
+    let raw_type = sock_type & 0x0F;
+
+    // — ShadePacket: AF_UNIX gets its own path — VFS-integrated, not SOCKET_TABLE.
+    if domain == 1 {
+        // AF_UNIX
+        let unix_type = match raw_type {
+            1 => UnixSocketType::Stream,
+            2 => UnixSocketType::Dgram,
+            _ => return errno::EINVAL,
+        };
+
+        let cred = current_ucred();
+        let socket = UnixSocket::new(unix_type, cred);
+        if nonblock {
+            socket.nonblocking.store(true, core::sync::atomic::Ordering::Release);
+        }
+
+        return install_unix_socket_fd(socket, nonblock, cloexec);
+    }
+
+    // Parse domain (IP sockets)
     let socket_domain = match domain {
-        1 => SocketDomain::Unix,
         2 => SocketDomain::Inet,
         10 => SocketDomain::Inet6,
         _ => return errno::EINVAL,
     };
 
     // Parse socket type (strip flags)
-    let socket_type = match sock_type & 0x0F {
+    let socket_type = match raw_type {
         1 => SocketType::Stream,
         2 => SocketType::Dgram,
         3 => SocketType::Raw,
@@ -432,7 +610,7 @@ pub fn sys_socket(domain: i32, sock_type: i32, protocol: i32) -> i64 {
     match Socket::new(socket_domain, socket_type, socket_protocol) {
         Ok(socket) => {
             // Handle NONBLOCK and CLOEXEC flags
-            if sock_type & 0x800 != 0 {
+            if nonblock {
                 socket.set_nonblocking(true);
             }
 
@@ -548,6 +726,26 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
         return errno::EFAULT;
     }
 
+    // — ShadePacket: AF_UNIX bind — register in Unix socket namespace
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        let unix_addr = match parse_sockaddr_un(addr, addrlen) {
+            Some(a) => a,
+            None => return errno::EINVAL,
+        };
+
+        // Bind the socket (sets local_addr, checks state)
+        if let Err(e) = unix_sock.bind(unix_addr.clone()) {
+            return unix_error_to_errno(e);
+        }
+
+        // Register in global namespace so connect() can find us
+        if let Err(e) = unix_socket::register_socket(unix_addr, unix_sock) {
+            return unix_error_to_errno(e);
+        }
+
+        return 0;
+    }
+
     let socket = match get_socket(fd) {
         Some(s) => s,
         None => return errno::EBADF,
@@ -579,6 +777,14 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
 /// sys_listen - Listen for connections on a socket
 pub fn sys_listen(fd: i32, backlog: i32) -> i64 {
     debug_print_num("listen: fd=", fd as i64);
+
+    // — ShadePacket: AF_UNIX listen
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        return match unix_sock.listen(backlog as u32) {
+            Ok(()) => 0,
+            Err(e) => unix_error_to_errno(e),
+        };
+    }
 
     let socket = match get_socket(fd) {
         Some(s) => s,
@@ -621,6 +827,51 @@ pub fn sys_accept(fd: i32, addr: u64, addrlen: u64) -> i64 {
     }
     if addrlen != 0 && addrlen >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
+    }
+
+    // — ShadePacket: AF_UNIX accept — pull from backlog, create server-side socket
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        let cred = current_ucred();
+        loop {
+            match unix_sock.accept(cred) {
+                Ok(Some(new_sock)) => {
+                    // Write peer address if requested
+                    if addr != 0 {
+                        let peer_addr = new_sock.local_addr.lock().clone();
+                        let rc = write_sockaddr_un(addr, addrlen, &peer_addr);
+                        if rc < 0 {
+                            return rc;
+                        }
+                    }
+                    return install_unix_socket_fd(new_sock, false, false);
+                }
+                Ok(None) => {
+                    // No pending connections
+                    if unix_sock.nonblocking.load(core::sync::atomic::Ordering::Acquire) {
+                        return errno::EAGAIN;
+                    }
+                    // Block on accept wait queue
+                    unsafe {
+                        unsafe extern "Rust" {
+                            fn sched_current_pid() -> Option<u32>;
+                            fn sched_block_interruptible();
+                        }
+                        if let Some(pid) = sched_current_pid() {
+                            if let Some(slot) = unix_sock.accept_wq.register(pid) {
+                                // Re-check before blocking
+                                if !unix_sock.backlog.lock().is_empty() {
+                                    unix_sock.accept_wq.unregister(slot);
+                                    continue;
+                                }
+                                sched_block_interruptible();
+                                unix_sock.accept_wq.unregister(slot);
+                            }
+                        }
+                    }
+                }
+                Err(e) => return unix_error_to_errno(e),
+            }
+        }
     }
 
     let socket = match get_socket(fd) {
@@ -680,6 +931,26 @@ fn alloc_ephemeral_port() -> u16 {
 pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
     if addr >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
+    }
+
+    // — ShadePacket: AF_UNIX connect — find listener in registry, create channel
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        let unix_addr = match parse_sockaddr_un(addr, addrlen) {
+            Some(a) => a,
+            None => return errno::EINVAL,
+        };
+
+        // Look up the target socket in the registry
+        let listener = match unix_socket::lookup_socket(&unix_addr) {
+            Some(s) => s,
+            None => return errno::ECONNREFUSED,
+        };
+
+        // Connect to the listener
+        return match unix_sock.connect_to(&listener) {
+            Ok(()) => 0,
+            Err(e) => unix_error_to_errno(e),
+        };
     }
 
     let socket = match get_socket(fd) {
@@ -884,6 +1155,21 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         return errno::EFAULT;
     }
 
+    // — ShadePacket: AF_UNIX send — write through the VnodeOps wrapper
+    // The VnodeOps::write() on UnixSocketVnode handles blocking.
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        let data = match uaccess::copy_from_user(buf, len) {
+            Ok(d) => d,
+            Err(_) => return errno::EFAULT,
+        };
+        return match unix_sock.stream_write(&data) {
+            Ok(n) => n as i64,
+            Err(UnixError::WouldBlock) => errno::EAGAIN,
+            Err(UnixError::BrokenPipe) => errno::EPIPE,
+            Err(e) => unix_error_to_errno(e),
+        };
+    }
+
     let socket = match get_socket(fd) {
         Some(s) => s,
         None => return errno::EBADF,
@@ -1051,6 +1337,22 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     }
     if buf.saturating_add(len as u64) >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
+    }
+
+    // — ShadePacket: AF_UNIX recv — read through the stream channel
+    if let Some(unix_sock) = get_unix_socket_from_fd(fd) {
+        let mut data = alloc::vec![0u8; len];
+        return match unix_sock.stream_read(&mut data) {
+            Ok(0) => 0, // EOF
+            Ok(n) => {
+                if uaccess::copy_to_user(buf, &data[..n]).is_err() {
+                    return errno::EFAULT;
+                }
+                n as i64
+            }
+            Err(UnixError::WouldBlock) => errno::EAGAIN,
+            Err(e) => unix_error_to_errno(e),
+        };
     }
 
     let socket = match get_socket(fd) {
@@ -2037,12 +2339,260 @@ pub fn sys_accept4(fd: i32, addr: u64, addrlen: u64, _flags: i32) -> i64 {
 
 /// sys_socketpair - Create a pair of connected sockets
 ///
-/// Simplified implementation: creates a bidirectional pipe pair.
-pub fn sys_socketpair(_domain: i32, _socktype: i32, _protocol: i32, sv_ptr: u64) -> i64 {
-    // Delegate to sys_pipe which creates a pipe pair
-    // This is a simplification - a real socketpair is bidirectional
-    // but for many use cases (e.g., parent-child communication) a pipe suffices
-    crate::vfs::sys_pipe(sv_ptr)
+/// — ShadePacket: Real bidirectional AF_UNIX socket pairs. No more pipe delegation.
+/// Wayland, DBus, and glib all use socketpair(AF_UNIX, SOCK_STREAM, 0) extensively.
+pub fn sys_socketpair(domain: i32, socktype: i32, _protocol: i32, sv_ptr: u64) -> i64 {
+    if sv_ptr == 0 || sv_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // — ShadePacket: Only AF_UNIX socketpair makes sense. AF_INET socketpair is UB.
+    if domain != 1 {
+        // AF_UNIX
+        // Fallback to pipe for non-AF_UNIX (backwards compat)
+        return crate::vfs::sys_pipe(sv_ptr);
+    }
+
+    let raw_type = socktype & 0x0F;
+    let nonblock = socktype & 0x800 != 0;
+    let cloexec = socktype & 0x80000 != 0;
+
+    if raw_type != 1 && raw_type != 2 {
+        // Only SOCK_STREAM and SOCK_DGRAM
+        return errno::EINVAL;
+    }
+
+    let cred = current_ucred();
+    let (sock_a, sock_b) = UnixSocket::create_pair(cred);
+
+    if nonblock {
+        sock_a.nonblocking.store(true, core::sync::atomic::Ordering::Release);
+        sock_b.nonblocking.store(true, core::sync::atomic::Ordering::Release);
+    }
+
+    let fd_a = install_unix_socket_fd(sock_a, nonblock, cloexec);
+    if fd_a < 0 {
+        return fd_a;
+    }
+
+    let fd_b = install_unix_socket_fd(sock_b, nonblock, cloexec);
+    if fd_b < 0 {
+        // Clean up fd_a
+        crate::vfs::sys_close(fd_a as i32);
+        return fd_b;
+    }
+
+    // Write both fds to userspace: sv[0] = fd_a, sv[1] = fd_b
+    let sv = [fd_a as i32, fd_b as i32];
+    let sv_bytes: [u8; 8] = unsafe { core::mem::transmute(sv) };
+    if uaccess::copy_to_user(sv_ptr, &sv_bytes).is_err() {
+        crate::vfs::sys_close(fd_a as i32);
+        crate::vfs::sys_close(fd_b as i32);
+        return errno::EFAULT;
+    }
+
+    0
+}
+
+// ============================================================================
+// sendmsg / recvmsg — Ancillary Data (SCM_RIGHTS, SCM_CREDENTIALS)
+// ============================================================================
+
+/// sys_sendmsg - Send a message with optional ancillary data
+///
+/// — ColdCipher: The fd-passing express lane. Wayland sends buffer fds here.
+/// Linux syscall 46 (sendmsg). msghdr contains iov for data + control for cmsg.
+pub fn sys_sendmsg(fd: i32, msg_ptr: u64, flags: i32) -> i64 {
+    if msg_ptr == 0 || msg_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Only AF_UNIX supports ancillary data in OXIDE (for now)
+    let unix_sock = match get_unix_socket_from_fd(fd) {
+        Some(s) => s,
+        None => {
+            // For IP sockets, fall back to regular send
+            // Read msghdr to get the iov data
+            return errno::ENOTSUP;
+        }
+    };
+
+    // Read struct msghdr from userspace (Linux x86_64 layout):
+    // msg_name: *mut u8       (8 bytes)
+    // msg_namelen: u32        (4 bytes + 4 pad)
+    // msg_iov: *const iovec   (8 bytes)
+    // msg_iovlen: usize       (8 bytes)
+    // msg_control: *mut u8    (8 bytes)
+    // msg_controllen: usize   (8 bytes)
+    // msg_flags: i32          (4 bytes)
+    // Total: 56 bytes
+    let hdr_raw = match uaccess::copy_from_user(msg_ptr, 56) {
+        Ok(d) => d,
+        Err(_) => return errno::EFAULT,
+    };
+
+    let msg_iov_ptr = u64::from_ne_bytes(hdr_raw[16..24].try_into().unwrap_or([0; 8]));
+    let msg_iovlen = u64::from_ne_bytes(hdr_raw[24..32].try_into().unwrap_or([0; 8])) as usize;
+    let msg_control_ptr = u64::from_ne_bytes(hdr_raw[32..40].try_into().unwrap_or([0; 8]));
+    let msg_controllen = u64::from_ne_bytes(hdr_raw[40..48].try_into().unwrap_or([0; 8])) as usize;
+
+    // Gather data from iov array
+    let mut data = Vec::new();
+    if msg_iovlen > 0 && msg_iov_ptr != 0 {
+        // Each iovec is 16 bytes: { void *iov_base (8), size_t iov_len (8) }
+        let iov_size = msg_iovlen.min(64) * 16; // cap at 64 iovecs
+        let iov_raw = match uaccess::copy_from_user(msg_iov_ptr, iov_size) {
+            Ok(d) => d,
+            Err(_) => return errno::EFAULT,
+        };
+
+        for i in 0..msg_iovlen.min(64) {
+            let base = u64::from_ne_bytes(
+                iov_raw[i * 16..i * 16 + 8].try_into().unwrap_or([0; 8]),
+            );
+            let len = u64::from_ne_bytes(
+                iov_raw[i * 16 + 8..i * 16 + 16].try_into().unwrap_or([0; 8]),
+            ) as usize;
+
+            if base != 0 && len > 0 && base < 0x0000_8000_0000_0000 {
+                if let Ok(chunk) = uaccess::copy_from_user(base, len) {
+                    data.extend_from_slice(&chunk);
+                }
+            }
+        }
+    }
+
+    // Parse control messages (ancillary data)
+    let cmsg_list = if msg_control_ptr != 0 && msg_controllen > 0 && msg_control_ptr < 0x0000_8000_0000_0000 {
+        match uaccess::copy_from_user(msg_control_ptr, msg_controllen) {
+            Ok(control_buf) => ancillary::parse_cmsg(&control_buf),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Send data + ancillary through the Unix socket
+    if cmsg_list.is_empty() {
+        match unix_sock.stream_write(&data) {
+            Ok(n) => n as i64,
+            Err(UnixError::WouldBlock) => {
+                if flags & 0x40 != 0 { errno::EAGAIN } else { errno::EAGAIN }
+            }
+            Err(UnixError::BrokenPipe) => errno::EPIPE,
+            Err(e) => unix_error_to_errno(e),
+        }
+    } else {
+        match unix_sock.stream_send_with_ancillary(&data, cmsg_list) {
+            Ok(n) => n as i64,
+            Err(UnixError::WouldBlock) => errno::EAGAIN,
+            Err(UnixError::BrokenPipe) => errno::EPIPE,
+            Err(e) => unix_error_to_errno(e),
+        }
+    }
+}
+
+/// sys_recvmsg - Receive a message with optional ancillary data
+///
+/// — ColdCipher: The receiving end of fd passing. Linux syscall 47.
+pub fn sys_recvmsg(fd: i32, msg_ptr: u64, flags: i32) -> i64 {
+    if msg_ptr == 0 || msg_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let unix_sock = match get_unix_socket_from_fd(fd) {
+        Some(s) => s,
+        None => return errno::ENOTSUP,
+    };
+
+    // Read msghdr
+    let hdr_raw = match uaccess::copy_from_user(msg_ptr, 56) {
+        Ok(d) => d,
+        Err(_) => return errno::EFAULT,
+    };
+
+    let msg_iov_ptr = u64::from_ne_bytes(hdr_raw[16..24].try_into().unwrap_or([0; 8]));
+    let msg_iovlen = u64::from_ne_bytes(hdr_raw[24..32].try_into().unwrap_or([0; 8])) as usize;
+    let msg_control_ptr = u64::from_ne_bytes(hdr_raw[32..40].try_into().unwrap_or([0; 8]));
+    let msg_controllen = u64::from_ne_bytes(hdr_raw[40..48].try_into().unwrap_or([0; 8])) as usize;
+
+    // Calculate total receive buffer size from iovecs
+    let mut total_len = 0usize;
+    let mut iov_entries = Vec::new();
+    if msg_iovlen > 0 && msg_iov_ptr != 0 {
+        let iov_size = msg_iovlen.min(64) * 16;
+        let iov_raw = match uaccess::copy_from_user(msg_iov_ptr, iov_size) {
+            Ok(d) => d,
+            Err(_) => return errno::EFAULT,
+        };
+
+        for i in 0..msg_iovlen.min(64) {
+            let base = u64::from_ne_bytes(
+                iov_raw[i * 16..i * 16 + 8].try_into().unwrap_or([0; 8]),
+            );
+            let len = u64::from_ne_bytes(
+                iov_raw[i * 16 + 8..i * 16 + 16].try_into().unwrap_or([0; 8]),
+            ) as usize;
+            iov_entries.push((base, len));
+            total_len += len;
+        }
+    }
+
+    if total_len == 0 {
+        total_len = 4096; // Default buffer if no iovecs
+    }
+
+    // Receive data + ancillary
+    let mut recv_buf = alloc::vec![0u8; total_len];
+    let (n, cmsg_list) = match unix_sock.stream_recv_with_ancillary(&mut recv_buf) {
+        Ok(result) => result,
+        Err(UnixError::WouldBlock) => {
+            if flags & 0x40 != 0 { return errno::EAGAIN; }
+            return errno::EAGAIN;
+        }
+        Err(e) => return unix_error_to_errno(e),
+    };
+
+    // Scatter data into iovecs
+    let mut data_offset = 0;
+    for (base, len) in &iov_entries {
+        if *base == 0 || *base >= 0x0000_8000_0000_0000 {
+            continue;
+        }
+        let copy_len = (*len).min(n.saturating_sub(data_offset));
+        if copy_len > 0 {
+            if uaccess::copy_to_user(*base, &recv_buf[data_offset..data_offset + copy_len]).is_err() {
+                return errno::EFAULT;
+            }
+            data_offset += copy_len;
+        }
+    }
+
+    // Serialize ancillary data to userspace control buffer
+    if !cmsg_list.is_empty() && msg_control_ptr != 0 && msg_controllen > 0 {
+        // — ColdCipher: SCM_RIGHTS requires fd translation. The sender's fd numbers
+        // are in the CmsgData::Rights. We need to install the actual File objects
+        // (which the channel preserved) into our FdTable and return NEW fd numbers.
+        // For now, pass through the raw fd numbers — proper translation happens
+        // in Task #3 (SCM_RIGHTS fd passing).
+        let mut control_buf = alloc::vec![0u8; msg_controllen];
+        let written = ancillary::serialize_cmsg(&cmsg_list, &mut control_buf);
+
+        if written > 0 {
+            let write_len = written.min(msg_controllen);
+            if uaccess::copy_to_user(msg_control_ptr, &control_buf[..write_len]).is_err() {
+                return errno::EFAULT;
+            }
+
+            // Update msg_controllen in the msghdr to actual bytes written
+            let controllen_bytes = (write_len as u64).to_ne_bytes();
+            if uaccess::copy_to_user(msg_ptr + 40, &controllen_bytes).is_err() {
+                return errno::EFAULT;
+            }
+        }
+    }
+
+    n as i64
 }
 
 // ============================================================================

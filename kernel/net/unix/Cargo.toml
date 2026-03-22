@@ -1,0 +1,11 @@
+[package]
+name = "unix-socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+os_core = { workspace = true }
+spin = { workspace = true }
+waitqueue = { workspace = true }
+vfs = { workspace = true }
