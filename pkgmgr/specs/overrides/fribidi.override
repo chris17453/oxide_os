@@ -1,0 +1,11 @@
+# FriBidi Build Override for OXIDE OS
+# — PulseForge: "Unicode bidirectional algorithm. RTL text needs this."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Ddocs=false
+  -Dtests=false
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"

@@ -1,0 +1,43 @@
+# GTK 3 Build Override for OXIDE OS
+# — NeonVale: "The widget toolkit. Buttons, windows, menus, text entries — everything
+# a desktop app draws comes from here. We build the Wayland backend only."
+#
+# This is the summit of the dependency chain. If this builds, we win.
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dwayland_backend=true
+  -Dx11_backend=false
+  -Dbroadway_backend=false
+  -Dwin32_backend=false
+  -Dquartz_backend=false
+  -Dmedia-ffmpeg=disabled
+  -Dmedia-gstreamer=disabled
+  -Dvulkan=disabled
+  -Dcloudproviders=disabled
+  -Dsysprof=disabled
+  -Dtracker=disabled
+  -Dcolord=disabled
+  -Dgtk_doc=false
+  -Dman-pages=false
+  -Dintrospection=disabled
+  -Dinstall-tests=false
+  -Dtests=false
+  -Ddemos=false
+  -Dexamples=false
+  -Dbuild-testsuite=false
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+post_configure() {
+    echo "  -> GTK3 configured for Wayland-only on OXIDE OS"
+}
+
+post_build() {
+    echo "============================================"
+    echo "  GTK 3 BUILT FOR OXIDE OS"
+    echo "  — NeonVale: The neon grid awakens."
+    echo "============================================"
+}

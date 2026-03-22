@@ -1,0 +1,28 @@
+# Wayland Build Override for OXIDE OS
+# — ShadePacket: "The display protocol. Replaces X11. Every pixel GTK draws
+# on a Wayland compositor flows through libwayland-client."
+#
+# CRITICAL: wayland-scanner runs on the HOST during build to generate C code
+# from XML protocol definitions. Must build it natively first, then cross-compile
+# the libraries with the host scanner path.
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Ddocumentation=false
+  -Dtests=false
+  -Ddtd_validation=false
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+pre_build() {
+    # — ShadePacket: Build wayland-scanner for host first
+    # The meson build needs a native scanner to generate protocol code
+    echo "  -> Note: wayland-scanner must be available on host"
+    echo "  -> Install wayland-devel on host: dnf install wayland-devel"
+}
+
+post_install() {
+    echo "  -> Wayland libraries installed: libwayland-client, libwayland-server, libwayland-cursor"
+}

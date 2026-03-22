@@ -1,0 +1,42 @@
+# GCC Build Override for OXIDE OS
+# — Hexline: native cross-compiler targeting OXIDE. Runs on Linux, emits OXIDE ELFs.
+
+SKIP_CONFIGURE=1
+
+EXTRA_CFLAGS=""
+EXTRA_LDFLAGS=""
+
+MAKE_TARGET="all-gcc all-target-libgcc"
+INSTALL_TARGET="install-gcc install-target-libgcc"
+
+# — Hexline: override the build command entirely. The builder sets CC=oxide-cc in the
+# environment which overrides GCC's Makefile. We unset everything and let GCC's
+# configure-generated Makefiles handle it.
+CUSTOM_BUILD_CMD="unset CC CXX AR RANLIB LD CFLAGS CXXFLAGS LDFLAGS && make -j4 CFLAGS_FOR_BUILD='-Wno-error -Wno-implicit-function-declaration -O2' all-gcc all-target-libgcc"
+
+pre_build() {
+    unset CC CXX AR RANLIB LD CFLAGS CXXFLAGS LDFLAGS
+    export MAKEINFO=missing
+    export CC=gcc
+    export CXX=g++
+    export AR=ar
+    export RANLIB=ranlib
+    export CFLAGS=""
+    export CXXFLAGS=""
+    export LDFLAGS=""
+    ./configure --prefix=/usr --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=x86_64-oxide-elf --enable-languages=c --disable-bootstrap --disable-nls --disable-libssp --disable-libquadmath --disable-libgomp --disable-libatomic --disable-libsanitizer --disable-libvtv --disable-libcc1 --disable-multilib --disable-threads --disable-shared --disable-lto --disable-plugin --disable-decimal-float --disable-libstdcxx --with-newlib --without-headers --with-sysroot=/ --with-gmp=/usr --with-mpfr=/usr --with-mpc=/usr gcc_cv_initfini_array=yes
+}
+
+post_build() {
+    echo "GCC built for OXIDE"
+}
+
+post_install() {
+    mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/lib" "$DESTDIR/usr/libexec/gcc"
+    GCC_BIN=$(find "$DESTDIR" -name 'gcc' -type f 2>/dev/null | grep bin | head -1)
+    CC1_BIN=$(find "$DESTDIR" -name 'cc1' -type f 2>/dev/null | head -1)
+    LIBGCC=$(find "$DESTDIR" -name 'libgcc.a' -type f 2>/dev/null | head -1)
+    test -n "$GCC_BIN" && cp "$GCC_BIN" "$DESTDIR/usr/bin/gcc" && ln -sf gcc "$DESTDIR/usr/bin/cc"
+    test -n "$CC1_BIN" && cp "$CC1_BIN" "$DESTDIR/usr/libexec/gcc/cc1"
+    test -n "$LIBGCC" && cp "$LIBGCC" "$DESTDIR/usr/lib/libgcc.a"
+}

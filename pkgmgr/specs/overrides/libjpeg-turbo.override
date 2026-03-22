@@ -1,0 +1,14 @@
+# libjpeg-turbo Build Override for OXIDE OS
+# — PulseForge: "JPEG decompression at warp speed. SIMD optional, sanity mandatory."
+
+BUILD_SYSTEM="cmake"
+
+CONFIGURE_FLAGS="
+  -DENABLE_SHARED=ON
+  -DENABLE_STATIC=ON
+  -DWITH_TURBOJPEG=ON
+  -DWITH_SIMD=OFF
+  -DCMAKE_INSTALL_DEFAULT_LIBDIR=lib
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"

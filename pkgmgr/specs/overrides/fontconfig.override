@@ -1,0 +1,29 @@
+# Fontconfig Build Override for OXIDE OS
+# — PulseForge: "Font discovery and matching. Without this, apps can't find fonts."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Ddoc=disabled
+  -Dtests=disabled
+  -Dtools=disabled
+  -Dcache-build=disabled
+  -Dnls=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+post_install() {
+    # — PulseForge: Create minimal fonts.conf so apps can find system fonts
+    mkdir -p "$DESTDIR/etc/fonts"
+    cat > "$DESTDIR/etc/fonts/fonts.conf" << 'FONTCONF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts</dir>
+  <dir>/usr/local/share/fonts</dir>
+  <cachedir>/var/cache/fontconfig</cachedir>
+</fontconfig>
+FONTCONF
+    echo "  -> Created minimal fonts.conf"
+}

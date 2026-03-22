@@ -1,0 +1,13 @@
+# Pixman Build Override for OXIDE OS
+# — PulseForge: "Low-level pixel manipulation. Cairo can't draw without it."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dgtk=disabled
+  -Dlibpng=enabled
+  -Dtests=disabled
+  -Ddemos=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS -DPIXMAN_NO_TLS"

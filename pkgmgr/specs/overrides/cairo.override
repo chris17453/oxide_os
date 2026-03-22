@@ -1,0 +1,24 @@
+# Cairo Build Override for OXIDE OS
+# — PulseForge: "2D graphics library. Draws everything GTK shows on screen.
+# We use the image backend (software rendering) + freetype for font rendering.
+# No X11, no Quartz, no DirectFB. Pure pixels."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dxlib=disabled
+  -Dxcb=disabled
+  -Dquartz=disabled
+  -Dwin32=disabled
+  -Dpng=enabled
+  -Dfreetype=enabled
+  -Dfontconfig=enabled
+  -Dzlib=enabled
+  -Dtee=disabled
+  -Dspectre=disabled
+  -Dsymbol-lookup=disabled
+  -Dtests=disabled
+  -Dgtk2-utils=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS -DCAIRO_NO_MUTEX"

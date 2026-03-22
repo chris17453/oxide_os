@@ -1,0 +1,24 @@
+# FreeType Build Override for OXIDE OS
+# — PulseForge: "Every glyph on screen passes through this library. Treat it well."
+# NOTE: Build twice — first without harfbuzz, then rebuild after harfbuzz is available.
+
+CONFIGURE_FLAGS="
+  --disable-freetype-config
+  --with-zlib=yes
+  --with-png=yes
+  --with-bzip2=no
+  --with-brotli=no
+  --with-harfbuzz=no
+  --enable-shared
+  --enable-static
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+post_configure() {
+    # — PulseForge: Force-disable harfbuzz on first pass. Circular dep hell:
+    # freetype needs harfbuzz, harfbuzz needs freetype. Build freetype first
+    # without harfbuzz, build harfbuzz with that freetype, then rebuild freetype
+    # with harfbuzz support.
+    echo "  -> FreeType configured (harfbuzz disabled for first pass)"
+}

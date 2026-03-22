@@ -1,0 +1,9 @@
+# Wayland Protocols Build Override for OXIDE OS
+# — ShadePacket: "XML protocol definitions. No code to compile — just install
+# the XML files and let wayland-scanner generate headers at GTK build time."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dtests=false
+"

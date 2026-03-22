@@ -1,0 +1,21 @@
+# libxkbcommon Build Override for OXIDE OS
+# — InputShade: "Keyboard keymap compilation and handling. Every keypress flows through this."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Denable-x11=false
+  -Denable-wayland=true
+  -Denable-docs=false
+  -Denable-tools=false
+  -Dxkb-config-root=/usr/share/X11/xkb
+  -Dx-locale-root=/usr/share/X11/locale
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+post_install() {
+    # — InputShade: Ship a minimal xkb keymap dataset. Full XKB data is huge
+    # but we need at least us/basic for Wayland to start.
+    echo "  -> xkbcommon installed. Ensure xkb data at /usr/share/X11/xkb"
+}

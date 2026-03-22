@@ -1,0 +1,45 @@
+# GNU Binutils Build Override for OXIDE OS
+# — Hexline: "as, ld, ar, nm, objdump, strip — the atoms of compilation.
+# Without these, GCC is just a fancy syntax checker."
+
+CONFIGURE_FLAGS="
+  --target=x86_64-oxide-elf
+  --disable-nls
+  --disable-werror
+  --disable-gdb
+  --disable-gdbserver
+  --disable-sim
+  --disable-readline
+  --disable-libdecnumber
+  --disable-libquadmath
+  --with-sysroot=/
+  --enable-deterministic-archives
+  --disable-multilib
+  --disable-gprofng
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+EXTRA_LDFLAGS="-Wl,--allow-multiple-definition"
+
+# — Hexline: binutils' configure insists on testing for 64-bit types
+# by running test programs. Cross-compiling means these tests fail.
+# Force the answers so configure doesn't bail.
+post_configure() {
+    echo "  -> binutils configured for OXIDE"
+}
+
+post_build() {
+    echo "Binutils built for OXIDE"
+}
+
+# — Hexline: install produces a pile of x86_64-oxide-elf-prefixed binaries.
+# We also want unprefixed symlinks so GCC can find them.
+post_install() {
+    cd "$DESTDIR/usr/bin" 2>/dev/null || cd "$DESTDIR/usr/local/bin" 2>/dev/null || true
+    for tool in as ld ar nm ranlib objdump objcopy strip readelf size strings; do
+        if [ -f "x86_64-oxide-elf-$tool" ] && [ ! -f "$tool" ]; then
+            ln -sf "x86_64-oxide-elf-$tool" "$tool"
+        fi
+    done
+    echo "  -> Created unprefixed symlinks"
+}

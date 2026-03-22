@@ -1,0 +1,18 @@
+# gdk-pixbuf Build Override for OXIDE OS
+# — PulseForge: "Image loading library for GTK. PNG, JPEG, TIFF, ICO."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dpng=enabled
+  -Djpeg=enabled
+  -Dtiff=enabled
+  -Dintrospection=disabled
+  -Dman=false
+  -Dinstalled_tests=false
+  -Dtests=false
+  -Dgio_sniffing=false
+  -Dbuiltin_loaders=all
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"

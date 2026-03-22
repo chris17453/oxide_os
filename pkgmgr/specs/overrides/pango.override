@@ -1,0 +1,15 @@
+# Pango Build Override for OXIDE OS
+# — PulseForge: "Text layout engine. Knows where every character goes."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dxft=disabled
+  -Dcairo=enabled
+  -Dfreetype=enabled
+  -Dfontconfig=enabled
+  -Dintrospection=disabled
+  -Dinstall-tests=false
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"

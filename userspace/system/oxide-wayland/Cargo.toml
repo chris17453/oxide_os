@@ -1,0 +1,11 @@
+[package]
+name = "oxide-wayland"
+version = "0.1.0"
+edition = "2024"
+description = "OXIDE Wayland compositor — renders to GOP framebuffer"
+
+[dependencies]
+
+[[bin]]
+name = "oxide-wayland"
+path = "src/main.rs"

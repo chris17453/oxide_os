@@ -117,6 +117,7 @@ members = [
     # userspace/system — core boot/session programs
     "userspace/system/init",
     "userspace/system/oxide-dbusd",
+    "userspace/system/oxide-wayland",
     "userspace/system/getty",
     "userspace/system/login",
     "userspace/system/passwd",

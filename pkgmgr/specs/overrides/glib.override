@@ -1,0 +1,53 @@
+# GLib Build Override for OXIDE OS
+# — PatchBay: "The bedrock of GTK. GObject, GMainLoop, GIO, GDBus — everything
+# GTK touches flows through glib. This is the hardest cross-compile in the chain."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dselinux=disabled
+  -Dlibmount=disabled
+  -Dman-pages=disabled
+  -Ddtrace=false
+  -Dsystemtap=false
+  -Dinstalled_tests=false
+  -Dtests=false
+  -Dnls=disabled
+  -Doss_fuzz=disabled
+  -Dglib_debug=disabled
+  -Dglib_assert=false
+  -Dglib_checks=false
+  -Dintrospection=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS -D_GNU_SOURCE"
+
+# — PatchBay: glib's meson build probes for many Linux-specific features.
+# Cross-compiling means these probes fail. We use a cross-answers file to
+# force the results we know are correct for OXIDE OS.
+pre_build() {
+    # Create meson cross-answers to bypass broken detection
+    cat > "$BUILD_DIR/oxide-cross-answers.txt" << 'XANSWERS'
+[built-in options]
+
+[properties]
+growing_stack = false
+has_c99_vsnprintf = true
+has_c99_snprintf = true
+has_unix98_printf = true
+
+[host_machine]
+XANSWERS
+    echo "  -> glib cross-answers file created"
+}
+
+post_configure() {
+    # — PatchBay: Fix false positives in feature detection
+    if [ -f "$BUILD_DIR/config.h" ]; then
+        # Disable inotify (not implemented in OXIDE yet)
+        sed -i 's/#define HAVE_SYS_INOTIFY_H 1//' "$BUILD_DIR/config.h" 2>/dev/null
+        # Disable xattr (not implemented)
+        sed -i 's/#define HAVE_XATTR 1//' "$BUILD_DIR/config.h" 2>/dev/null
+        echo "  -> Patched glib config.h for OXIDE"
+    fi
+}

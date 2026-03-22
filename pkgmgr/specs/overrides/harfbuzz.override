@@ -1,0 +1,22 @@
+# HarfBuzz Build Override for OXIDE OS
+# — PulseForge: "Text shaping engine. Turns Unicode codepoints into positioned glyphs."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dfreetype=enabled
+  -Dcairo=disabled
+  -Dglib=disabled
+  -Dgobject=disabled
+  -Dicu=disabled
+  -Dtests=disabled
+  -Ddocs=disabled
+  -Dbenchmark=disabled
+  -Dintrospection=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+post_build() {
+    echo "  -> HarfBuzz built. Now rebuild freetype with --with-harfbuzz=yes"
+}

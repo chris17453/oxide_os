@@ -1,0 +1,40 @@
+# GTK/Wayland Dependency Chain Build Order for OXIDE OS
+# — PulseForge: Build these in EXACT order. Each depends on all above it.
+#
+# Usage: for pkg in $(cat pkgmgr/specs/gtk-build-order.txt | grep -v '^#'); do
+#          make pkgmgr-build PKG=$pkg || break
+#        done
+
+# Tier 0: Already available (zlib, libffi, libexpat, ncurses, readline)
+
+# Tier 1: Image libraries (no complex deps)
+libpng
+libjpeg-turbo
+libtiff
+
+# Tier 2: Font rendering (depends on Tier 1)
+freetype
+pixman
+harfbuzz
+# NOTE: Rebuild freetype with harfbuzz support after harfbuzz is built
+# freetype  # (second pass with --with-harfbuzz=yes)
+
+# Tier 3: Text and font discovery
+fribidi
+fontconfig
+
+# Tier 4: Core libraries
+glib
+cairo
+pango
+gdk-pixbuf
+
+# Tier 5: Input and display protocol
+libxkbcommon
+wayland
+wayland-protocols
+
+# Tier 6: GTK
+# libepoxy  # (optional — only if GL support needed)
+# at-spi2-core  # (optional — accessibility)
+gtk3

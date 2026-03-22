@@ -1,0 +1,9 @@
+# libpng Build Override for OXIDE OS
+# — PulseForge: "PNG — the cockroach of image formats. Survives everything."
+
+CONFIGURE_FLAGS="
+  --disable-tests
+  --disable-tools
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"

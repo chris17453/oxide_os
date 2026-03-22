@@ -1,0 +1,18 @@
+# GNU Make Build Override for OXIDE OS
+# — Hexline: "the build tool that builds itself. Poetic."
+
+CONFIGURE_FLAGS="
+  --without-guile
+  --disable-nls
+  --disable-rpath
+  ac_cv_func_waitpid=yes
+  ac_cv_func_pipe=yes
+  make_cv_sys_gnu_glob=no
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+EXTRA_LDFLAGS="-Wl,--allow-multiple-definition"
+
+post_build() {
+    echo "GNU Make built for OXIDE"
+}
