@@ -3512,15 +3512,22 @@ pub unsafe extern "C" fn getentropy(buf: *mut u8, buflen: usize) -> i32 {
     if ret < 0 { ERRNO_VAR = errno::EIO; -1 } else { 0 }
 }
 
-// Environ
+// — GraveShift: environ points directly to the env module's pointer array.
+// One source of truth. setenv/getenv/execv all use the same data.
 #[unsafe(no_mangle)]
 pub static mut environ: *mut *mut u8 = core::ptr::null_mut();
 
-static mut EMPTY_ENVIRON: [*mut u8; 1] = [core::ptr::null_mut()];
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn init_environ() {
-    environ = (&raw mut EMPTY_ENVIRON) as *mut *mut u8;
+    environ = crate::env::get_environ() as *mut *mut u8;
+}
+
+/// — GraveShift: Called by _start to initialize env from the stack-provided envp.
+/// This is THE env initialization. One source of truth.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __libc_init_envp(envp: *const *const u8) {
+    crate::env::init_from_envp(envp);
+    environ = crate::env::get_environ() as *mut *mut u8;
 }
 
 // These are sometimes needed

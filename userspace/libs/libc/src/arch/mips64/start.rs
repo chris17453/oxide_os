@@ -46,7 +46,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "nop",
         // Should never reach here
         "break 0",
-        init_env = sym crate::env::init_env,
+        init_env = sym crate::env::init_defaults,
         init_stdio = sym crate::filestream::init_stdio,
         init_environ = sym crate::c_exports::init_environ,
         main = sym _main_wrapper,

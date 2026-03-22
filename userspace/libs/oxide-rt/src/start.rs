@@ -17,6 +17,12 @@
 
 use core::arch::asm;
 
+// — GraveShift: libc's env init function. Declared extern because oxide-rt
+// can't depend on libc (circular). Linked at final binary link time.
+unsafe extern "C" {
+    fn __libc_init_envp(envp: *const *const u8);
+}
+
 /// Entry point for OXIDE userspace programs using Rust std.
 ///
 /// — GraveShift: Reads argc/argv/envp from stack, stores them for std,
@@ -37,9 +43,13 @@ pub unsafe extern "C" fn _start() -> ! {
             "mov rsi, r13",
             "call {set_args}",
 
-            // — GraveShift: Compute envp = argv + (argc + 1) * 8 and init env
-            "lea rdi, [r13 + r12*8 + 8]",
+            // — GraveShift: Compute envp = argv + (argc + 1) * 8 and init BOTH envs
+            "lea r14, [r13 + r12*8 + 8]",
+            "mov rdi, r14",
             "call {init_env}",
+            // — GraveShift: Also init libc's env (C getenv/setenv uses this)
+            "mov rdi, r14",
+            "call {init_libc_env}",
 
             // — GraveShift: Call the compiler-generated main(argc, argv).
             // For std programs: compiler generates extern "C" fn main(isize, *const *const u8) -> isize
@@ -56,6 +66,7 @@ pub unsafe extern "C" fn _start() -> ! {
 
             set_args = sym crate::args::set_args,
             init_env = sym crate::env::init_from_envp,
+            init_libc_env = sym __libc_init_envp,
             exit = sym crate::os::exit,
         );
     }

@@ -239,7 +239,7 @@ pub use syscall::*;
 // Note: print!, println!, eprint!, eprintln! macros exist for formatted output
 // Use the `prints`, `printlns`, `eprints`, `eprintlns` functions for simple string printing
 // to avoid macro name conflicts
-pub use env::{env_iter, getenv, init_env, setenv, unsetenv};
+pub use env::{env_iter, getenv, init_defaults as init_env, setenv, unsetenv};
 pub use stdio::{
     StderrWriter, StdoutWriter, atoi, fflush_all, fflush_stdout, getchar, getline, itoa, parse_int,
     print_hex, print_i64, print_u64, putchar,
