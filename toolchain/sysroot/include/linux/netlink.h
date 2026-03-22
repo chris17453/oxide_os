@@ -87,6 +87,7 @@ struct rtgenmsg {
 #define NLMSG_OK(nlh,len)   ((len) >= (int)sizeof(struct nlmsghdr) && \
     (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && \
     (nlh)->nlmsg_len <= (unsigned int)(len))
+#define NLMSG_PAYLOAD(nlh,len)  ((nlh)->nlmsg_len - NLMSG_SPACE(len))
 
 /* Multicast groups for rtnetlink */
 #define RTMGRP_LINK          1

@@ -8888,6 +8888,158 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
     -1
 }
 
+// ============ Missing libc functions for glib link ============
+
+/// creat — create a new file (equivalent to open with O_CREAT|O_WRONLY|O_TRUNC)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn creat(path: *const u8, mode: i32) -> i32 {
+    // O_CREAT=0o100, O_WRONLY=1, O_TRUNC=0o1000
+    unsafe { open(path, 1 | 0o100 | 0o1000, mode) }
+}
+
+/// h_errno — global DNS error variable
+/// — ShadePacket: Used by gethostbyname/gethostbyaddr to report errors.
+#[unsafe(no_mangle)]
+pub static mut h_errno: i32 = 0;
+
+/// in6addr_any — IPv6 unspecified address (::)
+#[unsafe(no_mangle)]
+pub static in6addr_any: [u8; 16] = [0; 16];
+
+/// in6addr_loopback — IPv6 loopback address (::1)
+#[unsafe(no_mangle)]
+pub static in6addr_loopback: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+/// recvmsg — receive a message from a socket (with ancillary data)
+/// — ShadePacket: Wraps the recvmsg syscall (47). Used for SCM_RIGHTS fd passing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn recvmsg(fd: i32, msg: *mut u8, flags: i32) -> isize {
+    crate::syscall::syscall3(47, fd as usize, msg as usize, flags as usize) as isize
+}
+
+/// sendmsg — send a message on a socket (with ancillary data)
+/// — ShadePacket: Wraps the sendmsg syscall (46). Used for SCM_RIGHTS fd passing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sendmsg(fd: i32, msg: *const u8, flags: i32) -> isize {
+    crate::syscall::syscall3(46, fd as usize, msg as usize, flags as usize) as isize
+}
+
+/// getmntent — read next mount table entry from /proc/mounts
+/// — PulseForge: Real implementation that parses /proc/mounts lines.
+/// Format: "device mountpoint fstype options dump pass"
+/// Uses a static buffer per-stream (thread-unsafe, matching POSIX spec).
+static mut MNTENT_BUF: [u8; 512] = [0; 512];
+static mut MNTENT_ENTRY: MntentEntry = MntentEntry {
+    mnt_fsname: [0; 64],
+    mnt_dir: [0; 128],
+    mnt_type: [0; 32],
+    mnt_opts: [0; 128],
+    mnt_freq: 0,
+    mnt_passno: 0,
+};
+
+#[repr(C)]
+struct MntentEntry {
+    mnt_fsname: [u8; 64],
+    mnt_dir: [u8; 128],
+    mnt_type: [u8; 32],
+    mnt_opts: [u8; 128],
+    mnt_freq: i32,
+    mnt_passno: i32,
+}
+
+/// struct mntent as glib sees it (pointers into static buffers)
+#[repr(C)]
+struct Mntent {
+    mnt_fsname: *mut u8,
+    mnt_dir: *mut u8,
+    mnt_type: *mut u8,
+    mnt_opts: *mut u8,
+    mnt_freq: i32,
+    mnt_passno: i32,
+}
+
+static mut MNTENT_RESULT: Mntent = Mntent {
+    mnt_fsname: core::ptr::null_mut(),
+    mnt_dir: core::ptr::null_mut(),
+    mnt_type: core::ptr::null_mut(),
+    mnt_opts: core::ptr::null_mut(),
+    mnt_freq: 0,
+    mnt_passno: 0,
+};
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setmntent(filename: *const u8, mode: *const u8) -> *mut u8 {
+    // Just open the file (returns FILE* disguised as void*)
+    if filename.is_null() || mode.is_null() { return core::ptr::null_mut(); }
+    unsafe { crate::filestream::fopen(filename, mode) as *mut u8 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getmntent(stream: *mut u8) -> *mut Mntent {
+    if stream.is_null() { return core::ptr::null_mut(); }
+
+    // Read a line from the stream
+    let buf_ptr = unsafe { core::ptr::addr_of_mut!(MNTENT_BUF) };
+    let line_ptr = unsafe { crate::filestream::fgets((*buf_ptr).as_mut_ptr() as *mut u8, 512, stream as *mut crate::filestream::FILE) };
+    if line_ptr.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    // Parse: "fsname dir type opts freq passno\n"
+    let buf = unsafe { &*buf_ptr };
+    let mut pos = 0;
+    let len = buf.iter().position(|&b| b == b'\n' || b == 0).unwrap_or(512);
+
+    // Helper to extract next field
+    fn next_field(buf: &[u8], pos: &mut usize, len: usize, out: &mut [u8]) {
+        while *pos < len && buf[*pos] == b' ' { *pos += 1; }
+        let start = *pos;
+        while *pos < len && buf[*pos] != b' ' && buf[*pos] != b'\n' { *pos += 1; }
+        let flen = (*pos - start).min(out.len() - 1);
+        out[..flen].copy_from_slice(&buf[start..start + flen]);
+        out[flen] = 0;
+    }
+
+    unsafe {
+        let entry = core::ptr::addr_of_mut!(MNTENT_ENTRY);
+        let result = core::ptr::addr_of_mut!(MNTENT_RESULT);
+
+        next_field(buf, &mut pos, len, &mut (*entry).mnt_fsname);
+        next_field(buf, &mut pos, len, &mut (*entry).mnt_dir);
+        next_field(buf, &mut pos, len, &mut (*entry).mnt_type);
+        next_field(buf, &mut pos, len, &mut (*entry).mnt_opts);
+
+        (*entry).mnt_freq = 0;
+        (*entry).mnt_passno = 0;
+
+        (*result).mnt_fsname = (*entry).mnt_fsname.as_mut_ptr();
+        (*result).mnt_dir = (*entry).mnt_dir.as_mut_ptr();
+        (*result).mnt_type = (*entry).mnt_type.as_mut_ptr();
+        (*result).mnt_opts = (*entry).mnt_opts.as_mut_ptr();
+        (*result).mnt_freq = (*entry).mnt_freq;
+        (*result).mnt_passno = (*entry).mnt_passno;
+
+        result
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn endmntent(stream: *mut u8) -> i32 {
+    if !stream.is_null() {
+        unsafe { crate::filestream::fclose(stream as *mut crate::filestream::FILE); }
+    }
+    1 // Always returns 1 per POSIX
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hasmntopt(mnt: *const Mntent, opt: *const u8) -> *mut u8 {
+    if mnt.is_null() || opt.is_null() { return core::ptr::null_mut(); }
+    // Search for opt substring in mnt_opts
+    // Simple strstr-like search
+    unsafe { strstr((*mnt).mnt_opts as *const u8, opt) as *mut u8 }
+}
+
 /// fnmatch — POSIX filename pattern matching with shell wildcards.
 /// — PulseForge: Real recursive matcher. Handles *, ?, [abc], [!abc] character
 /// classes. FNM_PATHNAME makes * not match /. FNM_PERIOD makes leading . literal.
