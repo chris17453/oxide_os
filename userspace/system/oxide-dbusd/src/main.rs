@@ -500,7 +500,7 @@ impl BusDaemon {
 // ============================================================================
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+fn main() -> i32 {
     let mut daemon = BusDaemon::new();
     daemon.run()
 }
@@ -514,7 +514,6 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[global_allocator]
 static ALLOC: SimpleAlloc = SimpleAlloc;
 struct SimpleAlloc;
-
 unsafe impl core::alloc::GlobalAlloc for SimpleAlloc {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         unsafe extern "C" { fn malloc(size: usize) -> *mut u8; }
