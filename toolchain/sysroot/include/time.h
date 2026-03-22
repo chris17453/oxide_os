@@ -62,6 +62,7 @@ char *asctime(const struct tm *tm);
 char *asctime_r(const struct tm *tm, char *buf);
 char *ctime(const time_t *timep);
 char *ctime_r(const time_t *timep, char *buf);
+struct tm *gmtime_r(const time_t *timep, struct tm *result);
 size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
 char *strptime(const char *s, const char *format, struct tm *tm);
 

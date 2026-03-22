@@ -524,9 +524,17 @@ pkg_config_libdir = '{sysroot}/lib/pkgconfig'
 iconv_impl = 'libc'
 
 [built-in options]
-c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC']
-c_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition']
-cpp_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition']
+# — PulseForge: Pre-define HAVE_* macros for POSIX functions that exist in
+# liboxide_libc.a but meson can't detect via __has_builtin (clang limitation).
+# This is the standard cross-compilation approach — the cross file provides
+# function existence information that the build system can't probe itself.
+c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC',
+          '-DHAVE_CTIME_R=1', '-DHAVE_LOCALTIME_R=1', '-DHAVE_GMTIME_R=1',
+          '-DHAVE_STRNLEN=1', '-DHAVE_MMAP=1', '-DHAVE_MLOCK=1',
+          '-DHAVE_POSIX_MEMALIGN=1', '-DHAVE_GETLINE=1', '-DHAVE_STRSIGNAL=1',
+          '-DHAVE_NEWLOCALE=0', '-DHAVE_USELOCALE=0']
+c_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition', '-loxide_libc']
+cpp_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition', '-loxide_libc']
 
 [host_machine]
 system = 'linux'

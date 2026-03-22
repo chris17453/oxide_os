@@ -2052,6 +2052,25 @@ pub unsafe extern "C" fn ctime_r(timep: *const i64, buf: *mut u8) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub static mut timezone: i64 = 0;
 
+/// — PulseForge: __oxide_ctime_r / __oxide_gmtime_r — aliases for meson compatibility.
+/// Our time.h declares these as macros: #define ctime_r __oxide_ctime_r.
+/// This lets meson's function detection (#define ctime_r meson_disable_...)
+/// suppress the macro, avoiding conflicting prototype declarations.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __oxide_ctime_r(timep: *const i64, buf: *mut u8) -> *mut u8 {
+    unsafe { ctime_r(timep, buf) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __oxide_gmtime_r(timep: *const i64, result: *mut crate::time::Tm) -> *mut crate::time::Tm {
+    unsafe { gmtime_r(timep, result) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __oxide_localtime_r(timep: *const i64, result: *mut crate::time::Tm) -> *mut crate::time::Tm {
+    unsafe { localtime_r(timep, result) }
+}
+
 #[unsafe(no_mangle)]
 pub static mut altzone: i64 = 0;
 
@@ -8889,6 +8908,27 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
 }
 
 // ============ Missing libc functions for glib link ============
+
+/// utimes — set file access and modification times
+/// — PulseForge: Wraps utimensat syscall (280). Converts timeval to timespec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn utimes(filename: *const u8, times: *const [i64; 4]) -> i32 {
+    // struct timeval { time_t tv_sec; suseconds_t tv_usec; } × 2
+    // Convert to struct timespec { time_t tv_sec; long tv_nsec; } × 2
+    if times.is_null() {
+        // NULL = set to current time
+        crate::syscall::syscall4(280, 0xFFFFFF9C_u64 as usize, filename as usize, 0, 0) as i32 // AT_FDCWD, NULL times
+    } else {
+        let tv = unsafe { &*times };
+        let ts: [i64; 4] = [
+            tv[0],                // atime.tv_sec
+            tv[1] * 1000,        // atime.tv_nsec (usec → nsec)
+            tv[2],                // mtime.tv_sec
+            tv[3] * 1000,        // mtime.tv_nsec
+        ];
+        crate::syscall::syscall4(280, 0xFFFFFF9C_u64 as usize, filename as usize, ts.as_ptr() as usize, 0) as i32
+    }
+}
 
 /// strcasecmp — case-insensitive string comparison
 #[unsafe(no_mangle)]
