@@ -3347,12 +3347,37 @@ pub unsafe extern "C" fn pthread_setcanceltype(_type: i32, _oldtype: *mut i32) -
     0
 }
 
-// ============ dlfcn stubs ============
+// ============ dlfcn — dynamic linking ============
+// — IronGhost: For STATIC binaries, dlopen returns NULL because there's no
+// dynamic linker in the process. This is CORRECT per POSIX — dlopen fails
+// when no shared library loading infrastructure exists. For DYNAMIC binaries,
+// the real implementations in kernel/libc-support/dl/src/lib.rs (full ELF
+// loader with relocation and symbol resolution) are linked via ld-oxide.so.1.
 
-// — IronGhost: dlopen/dlsym/dlclose/dlerror/dladdr are implemented in
-// kernel/libc-support/dl/src/lib.rs with real ELF loading, relocation,
-// and symbol resolution. No stubs here — the real implementations are
-// linked from the dl staticlib.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlopen(_filename: *const u8, _flags: i32) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlsym(_handle: *mut u8, _symbol: *const u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlclose(_handle: *mut u8) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlerror() -> *const u8 {
+    b"Static binary: dynamic loading not available\0".as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dladdr(_addr: *const u8, _info: *mut u8) -> i32 {
+    0
+}
 
 // ============ statvfs ============
 
