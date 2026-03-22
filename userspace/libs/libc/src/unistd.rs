@@ -61,8 +61,12 @@ pub fn exec(path: &str) -> i32 {
 
 /// Execute program with arguments (NULL-terminated argv array)
 /// argv[0] should be the program name, argv[argc] must be NULL
+/// execv — execute program, inheriting current environment.
+/// — GraveShift: Like Linux, we pass the current environment to the child.
+/// The old version passed NULL envp which meant children got no env vars.
 pub fn execv(path: &str, argv: *const *const u8) -> i32 {
-    syscall::sys_execve(path, argv, core::ptr::null())
+    let envp = crate::env::build_envp();
+    syscall::sys_execve(path, argv, envp)
 }
 
 /// Execute program with arguments and environment

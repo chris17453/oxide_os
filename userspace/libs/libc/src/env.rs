@@ -149,6 +149,56 @@ pub extern "C" fn init_env() {
     setenv("PWD", "/");
 }
 
+/// Build an envp array for execve.
+/// Returns a pointer to a NULL-terminated array of "KEY=value\0" string pointers.
+/// The caller must free the returned memory.
+/// — GraveShift: Allocates on the heap. Each "KEY=value" string is heap-allocated.
+/// The array of pointers is also heap-allocated. All freed when the process exits.
+pub fn build_envp() -> *const *const u8 {
+    let env = ENV.lock();
+
+    // Count env vars
+    let mut count = 0;
+    for var in env.iter() {
+        if var.used { count += 1; }
+    }
+
+    // Allocate pointer array (count + 1 for NULL terminator)
+    let array_size = (count + 1) * core::mem::size_of::<*const u8>();
+    let array = unsafe { crate::c_exports::malloc(array_size) } as *mut *const u8;
+    if array.is_null() {
+        return core::ptr::null();
+    }
+
+    // Fill array with "KEY=value" strings
+    let mut idx = 0;
+    for var in env.iter() {
+        if !var.used { continue; }
+
+        // Get name length
+        let name_len = var.name.iter().position(|&b| b == 0).unwrap_or(MAX_VAR_LEN);
+        let value_len = var.value.iter().position(|&b| b == 0).unwrap_or(MAX_VAR_LEN);
+        let total = name_len + 1 + value_len + 1; // "name=value\0"
+
+        let s = unsafe { crate::c_exports::malloc(total) };
+        if s.is_null() { continue; }
+
+        unsafe {
+            core::ptr::copy_nonoverlapping(var.name.as_ptr(), s, name_len);
+            *s.add(name_len) = b'=';
+            core::ptr::copy_nonoverlapping(var.value.as_ptr(), s.add(name_len + 1), value_len);
+            *s.add(name_len + 1 + value_len) = 0;
+            *array.add(idx) = s;
+        }
+        idx += 1;
+    }
+
+    // NULL terminator
+    unsafe { *array.add(idx) = core::ptr::null(); }
+
+    array as *const *const u8
+}
+
 /// Iterate over all environment variables
 ///
 /// Calls the callback with (name, value) for each set variable.
