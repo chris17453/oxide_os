@@ -572,20 +572,91 @@ impl Compositor {
     fn run(&mut self) -> i32 {
         write_str(1, "=== oxide-wayland compositor starting ===\n");
 
-        // Open /dev/fb0
+        // — NeonVale: Step 1: Switch our VT to graphics mode.
+        // This tells the kernel compositor "don't draw text on this VT,
+        // I'm handling pixels directly." The kernel still blits our VFB
+        // to hardware — we just own the pixel content now.
+        let tty_path = b"/dev/tty\0";
+        let tty_fd = unsafe { syscall3(2, tty_path.as_ptr() as usize, 2, 0) } as i32;
+        if tty_fd >= 0 {
+            // KDSETMODE = 0x4B3A, KD_GRAPHICS = 0x01
+            let ret = unsafe { syscall3(16, tty_fd as usize, 0x4B3A, 1) };
+            if ret >= 0 {
+                write_str(1, "[WAYLAND] VT set to KD_GRAPHICS mode\n");
+            } else {
+                write_str(1, "[WAYLAND] Warning: KDSETMODE failed\n");
+            }
+        }
+
+        // — NeonVale: Step 2: Open /dev/fb0 — our VT's virtual framebuffer.
+        // Each VT has its own backing buffer. The kernel compositor blits
+        // VFBs to hardware at ~100Hz. We write pixels, kernel handles display.
         let fb_path = b"/dev/fb0\0";
-        let fb_fd = unsafe { syscall2(2, fb_path.as_ptr() as usize, 2) } as i32; // O_RDWR=2
+        let fb_fd = unsafe { syscall3(2, fb_path.as_ptr() as usize, 2, 0) } as i32;
         if fb_fd < 0 {
-            write_str(1, "[WAYLAND] Warning: /dev/fb0 not available, running headless\n");
+            write_str(1, "[WAYLAND] Warning: /dev/fb0 not available (err=");
+            // Print error number
+            let err = -(fb_fd as i32);
+            let mut buf = [0u8; 10];
+            let mut i = 0;
+            let mut n = err as u32;
+            if n == 0 { buf[0] = b'0'; i = 1; }
+            else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
+            write_bytes(1, &buf[..i]);
+            write_str(1, "), running headless\n");
         } else {
+            write_str(1, "[WAYLAND] /dev/fb0 opened\n");
+
+            // Get framebuffer info via ioctl
+            // FBIOGET_VSCREENINFO = 0x4600
+            #[repr(C)]
+            struct FbVarScreenInfo {
+                xres: u32, yres: u32,
+                xres_virtual: u32, yres_virtual: u32,
+                xoffset: u32, yoffset: u32,
+                bits_per_pixel: u32,
+                _pad: [u32; 33],
+            }
+            let mut vinfo: FbVarScreenInfo = unsafe { core::mem::zeroed() };
+            let ioctl_ret = unsafe { syscall3(16, fb_fd as usize, 0x4600, &mut vinfo as *mut _ as usize) };
+            if ioctl_ret >= 0 {
+                self.fb_width = vinfo.xres;
+                self.fb_height = vinfo.yres;
+                self.fb_stride = vinfo.xres * (vinfo.bits_per_pixel / 8);
+                write_str(1, "[WAYLAND] Framebuffer: ");
+                // Print width x height
+                let mut buf = [0u8; 10];
+                let mut i = 0;
+                let mut n = vinfo.xres;
+                if n == 0 { buf[0] = b'0'; i = 1; }
+                else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
+                write_bytes(1, &buf[..i]);
+                write_str(1, "x");
+                i = 0; n = vinfo.yres;
+                if n == 0 { buf[0] = b'0'; i = 1; }
+                else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
+                write_bytes(1, &buf[..i]);
+                write_str(1, "\n");
+            }
+
             // mmap the framebuffer
             let fb_size = (self.fb_width * self.fb_height * 4) as usize;
             let ptr = unsafe {
                 syscall6(9, 0, fb_size, 3, 1, fb_fd as usize, 0) // mmap(NULL, size, PROT_READ|WRITE, MAP_SHARED, fd, 0)
             };
-            if ptr > 0 && (ptr as usize) < 0xFFFF_FFFF_FFFF_F000 {
+            if (ptr as isize) > 0 && (ptr as usize) < 0xFFFF_FFFF_FFFF_F000 {
                 self.fb_ptr = ptr as *mut u8;
                 write_str(1, "[WAYLAND] Framebuffer mmap'd\n");
+
+                // — NeonVale: Clear to cyberpunk navy to prove we have framebuffer access
+                let pixel_count = (self.fb_width * self.fb_height) as usize;
+                let fb = unsafe { core::slice::from_raw_parts_mut(self.fb_ptr as *mut u32, pixel_count) };
+                for pixel in fb.iter_mut() {
+                    *pixel = 0xFF1a1a2e;
+                }
+                write_str(1, "[WAYLAND] Cleared framebuffer to navy\n");
+            } else {
+                write_str(1, "[WAYLAND] mmap failed\n");
             }
         }
 
