@@ -8890,6 +8890,50 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
 
 // ============ Missing libc functions for glib link ============
 
+/// strcasecmp — case-insensitive string comparison
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcasecmp(s1: *const u8, s2: *const u8) -> i32 {
+    let mut i = 0;
+    loop {
+        let c1 = unsafe { *s1.add(i) };
+        let c2 = unsafe { *s2.add(i) };
+        if c1 == 0 && c2 == 0 { return 0; }
+        let l1 = if c1 >= b'A' && c1 <= b'Z' { c1 + 32 } else { c1 };
+        let l2 = if c2 >= b'A' && c2 <= b'Z' { c2 + 32 } else { c2 };
+        if l1 != l2 { return l1 as i32 - l2 as i32; }
+        i += 1;
+    }
+}
+
+/// strxfrm — locale-based string transformation for comparison.
+/// — PulseForge: In C/POSIX locale (which OXIDE uses), strxfrm is just strncpy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strxfrm(dest: *mut u8, src: *const u8, n: usize) -> usize {
+    let mut len = 0;
+    while unsafe { *src.add(len) } != 0 { len += 1; }
+    if !dest.is_null() && n > 0 {
+        let copy = len.min(n - 1);
+        unsafe { core::ptr::copy_nonoverlapping(src, dest, copy); }
+        unsafe { *dest.add(copy) = 0; }
+    }
+    len
+}
+
+/// strncasecmp — case-insensitive string comparison (bounded)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strncasecmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    for i in 0..n {
+        let c1 = unsafe { *s1.add(i) };
+        let c2 = unsafe { *s2.add(i) };
+        if c1 == 0 && c2 == 0 { return 0; }
+        let l1 = if c1 >= b'A' && c1 <= b'Z' { c1 + 32 } else { c1 };
+        let l2 = if c2 >= b'A' && c2 <= b'Z' { c2 + 32 } else { c2 };
+        if l1 != l2 { return l1 as i32 - l2 as i32; }
+        if c1 == 0 { return 0; }
+    }
+    0
+}
+
 /// creat — create a new file (equivalent to open with O_CREAT|O_WRONLY|O_TRUNC)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn creat(path: *const u8, mode: i32) -> i32 {

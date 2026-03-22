@@ -35,6 +35,15 @@ char *hasmntopt(const struct mntent *mnt, const char *opt);
 #define MOUNTED         _PATH_MOUNTED
 #define MNTTAB          _PATH_MNTTAB
 
+/* Mount option strings */
+#define MNTOPT_RO       "ro"
+#define MNTOPT_RW       "rw"
+#define MNTOPT_SUID     "suid"
+#define MNTOPT_NOSUID   "nosuid"
+#define MNTOPT_NODEV    "nodev"
+#define MNTOPT_NOEXEC   "noexec"
+#define MNTOPT_DEFAULTS "defaults"
+
 #ifdef __cplusplus
 }
 #endif
