@@ -197,6 +197,14 @@ unix-socket-test: toolchain
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/unix-socket-test userspace/tests/unix-socket-test.c
 	@echo "AF_UNIX socket test suite built: $(USERSPACE_OUT_RELEASE)/unix-socket-test"
 
+# — NeonVale: gtk-hello — GTK3 hello world (Wayland backend)
+gtk-hello: toolchain
+	@echo "Building GTK3 hello world..."
+	@GTK_CFLAGS=$$(toolchain/bin/oxide-pkg-config --cflags gtk+-3.0 2>/dev/null) && \
+	 GTK_LIBS=$$(toolchain/bin/oxide-pkg-config --libs --static gtk+-3.0 2>/dev/null) && \
+	 toolchain/bin/oxide-cc $$GTK_CFLAGS userspace/tests/gtk-hello.c -o $(USERSPACE_OUT_RELEASE)/gtk-hello $$GTK_LIBS -lstdc++ -Wl,--allow-multiple-definition
+	@echo "GTK3 hello world built: $(USERSPACE_OUT_RELEASE)/gtk-hello"
+
 # — CrashBloom: dynlink-suite — comprehensive dynamic linking test suite
 dynlink-suite: toolchain
 	@echo "Building dynamic linking test suite..."
