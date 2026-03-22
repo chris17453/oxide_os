@@ -5,6 +5,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Process control */
 void exit(int status) __attribute__((noreturn));
 void _exit(int status) __attribute__((noreturn));
@@ -100,5 +104,9 @@ int ptsname_r(int fd, char *buf, size_t buflen);
 /* Constants */
 #define RAND_MAX 0x7FFFFFFF
 #define MB_CUR_MAX 4
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _STDLIB_H */

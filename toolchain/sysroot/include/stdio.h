@@ -7,6 +7,10 @@
 #include <stdarg.h>
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* File operations (declarations match libc implementation) */
 #ifndef __FILE_defined
 #define __FILE_defined
@@ -144,5 +148,9 @@ size_t fread_unlocked(void *ptr, size_t size, size_t nmemb, FILE *stream);
 void flockfile(FILE *stream);
 void funlockfile(FILE *stream);
 int ftrylockfile(FILE *stream);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _STDIO_H */

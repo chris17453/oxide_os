@@ -5,6 +5,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Memory functions */
 void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);
@@ -60,5 +64,9 @@ int ffsll(long long i);
 
 /* GNU extension */
 void *memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _STRING_H */

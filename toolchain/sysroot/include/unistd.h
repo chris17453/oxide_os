@@ -17,6 +17,10 @@
 #include <sys/types.h>
 #include <sys/time.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Standard file descriptors */
 #define STDIN_FILENO    0
 #define STDOUT_FILENO   1
@@ -186,5 +190,9 @@ size_t confstr(int name, char *buf, size_t len);
 /* File operations (additional) */
 int rename(const char *oldpath, const char *newpath);
 int chroot(const char *path);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _UNISTD_H */

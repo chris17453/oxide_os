@@ -5,6 +5,10 @@
 
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned int tcflag_t;
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;
@@ -138,5 +142,9 @@ speed_t cfgetospeed(const struct termios *termios_p);
 int cfsetispeed(struct termios *termios_p, speed_t speed);
 int cfsetospeed(struct termios *termios_p, speed_t speed);
 void cfmakeraw(struct termios *termios_p);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _TERMIOS_H */

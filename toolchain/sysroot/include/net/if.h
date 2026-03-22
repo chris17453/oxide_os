@@ -3,6 +3,10 @@
 
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define IF_NAMESIZE  16
 #define IFNAMSIZ     16
 
@@ -15,5 +19,9 @@ struct if_nameindex *if_nameindex(void);
 void if_freenameindex(struct if_nameindex *ptr);
 unsigned int if_nametoindex(const char *ifname);
 char *if_indextoname(unsigned int ifindex, char *ifname);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _NET_IF_H */

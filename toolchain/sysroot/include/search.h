@@ -7,6 +7,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Hash table (hsearch family) */
 typedef enum { FIND, ENTER } ACTION;
 
@@ -38,5 +42,9 @@ extern void *lsearch(const void *__key, void *__base,
 /* Linked list (insque/remque) */
 extern void insque(void *__elem, void *__prev);
 extern void remque(void *__elem);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SEARCH_H */

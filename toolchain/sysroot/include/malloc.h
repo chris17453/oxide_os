@@ -8,8 +8,16 @@
 
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* POSIX aligned allocation */
 void *memalign(size_t alignment, size_t size);
 void *posix_memalign_wrapper(void **memptr, size_t alignment, size_t size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MALLOC_H */

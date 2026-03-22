@@ -7,6 +7,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct inotify_event {
     int      wd;
     uint32_t mask;
@@ -56,5 +60,9 @@ int inotify_init(void);
 int inotify_init1(int flags);
 int inotify_add_watch(int fd, const char *pathname, uint32_t mask);
 int inotify_rm_watch(int fd, int wd);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_INOTIFY_H */

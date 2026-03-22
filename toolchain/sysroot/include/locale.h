@@ -5,6 +5,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define LC_CTYPE    0
 #define LC_NUMERIC  1
 #define LC_TIME     2
@@ -58,5 +62,9 @@ locale_t newlocale(int category_mask, const char *locale, locale_t base);
 locale_t uselocale(locale_t newloc);
 void freelocale(locale_t locobj);
 locale_t duplocale(locale_t locobj);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _LOCALE_H */

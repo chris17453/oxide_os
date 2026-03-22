@@ -6,6 +6,10 @@
 #include <wchar.h>
 #include <locale.h>  /* For locale_t */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned long wctype_t;
 typedef const int *wctrans_t;
 
@@ -49,5 +53,9 @@ wctype_t wctype_l(const char *name, locale_t locale);
 int iswctype_l(wint_t wc, wctype_t desc, locale_t locale);
 wctrans_t wctrans_l(const char *name, locale_t locale);
 wint_t towctrans_l(wint_t wc, wctrans_t desc, locale_t locale);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _WCTYPE_H */

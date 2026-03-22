@@ -3,6 +3,10 @@
 #ifndef _MATH_H
 #define _MATH_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Constants */
 #define M_E         2.7182818284590452354
 #define M_LOG2E     1.4426950408889634074
@@ -235,5 +239,9 @@ long double copysignl(long double x, long double y);
 long double frexpl(long double x, int *exp);
 long double ldexpl(long double x, int exp);
 long double modfl(long double x, long double *iptr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MATH_H */

@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned int socklen_t;
 typedef unsigned short sa_family_t;
 
@@ -145,5 +149,9 @@ int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t
 int socketpair(int domain, int type, int protocol, int sv[2]);
 ssize_t writev(int fd, const struct iovec *iov, int iovcnt);
 ssize_t readv(int fd, const struct iovec *iov, int iovcnt);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_SOCKET_H */

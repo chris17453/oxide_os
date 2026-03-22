@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <sys/socket.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef uint32_t in_addr_t;
 typedef uint16_t in_port_t;
 
@@ -87,5 +91,9 @@ uint16_t htons(uint16_t hostshort);
 uint16_t ntohs(uint16_t netshort);
 uint32_t htonl(uint32_t hostlong);
 uint32_t ntohl(uint32_t netlong);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _NETINET_IN_H */

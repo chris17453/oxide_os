@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct hostent {
     char *h_name;
     char **h_aliases;
@@ -87,5 +91,9 @@ void herror(const char *s);
 const char *hstrerror(int err);
 
 extern int h_errno;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _NETDB_H */

@@ -9,6 +9,10 @@
 #include <stdint.h>
 #include <arpa/nameser_compat.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* DNS message header */
 typedef struct {
     unsigned id     :16;
@@ -142,5 +146,9 @@ int dn_expand(const unsigned char *msg, const unsigned char *eomorig,
 #define ns_rr_ttl(rr)            ((rr).ttl)
 #define ns_rr_rdlen(rr)          ((rr).rdlength)
 #define ns_rr_rdata(rr)          ((rr).rdata)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _ARPA_NAMESER_H */

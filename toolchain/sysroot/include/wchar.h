@@ -14,6 +14,10 @@ typedef struct _FILE FILE;
 
 #include <stdio.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef int wint_t;
 typedef struct { int __count; unsigned int __value; } mbstate_t;
 
@@ -103,5 +107,9 @@ int vswscanf(const wchar_t *s, const wchar_t *format, va_list ap);
 /* Time */
 size_t wcsftime(wchar_t *s, size_t maxsize, const wchar_t *format,
                 const struct tm *timeptr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _WCHAR_H */

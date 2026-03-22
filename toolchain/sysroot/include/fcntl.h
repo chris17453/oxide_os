@@ -5,6 +5,10 @@
 
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Open flags */
 #define O_RDONLY    0x0000
 #define O_WRONLY    0x0001
@@ -113,5 +117,9 @@ ssize_t splice(int fd_in, off_t *off_in, int fd_out, off_t *off_out,
                size_t len, unsigned int flags);
 int posix_fallocate(int fd, off_t offset, off_t len);
 int posix_fadvise(int fd, off_t offset, off_t len, int advice);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _FCNTL_H */

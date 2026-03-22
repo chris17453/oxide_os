@@ -9,6 +9,10 @@
 #include <netinet/in.h>
 #include <arpa/nameser.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MAXNS       3
 #define MAXDNSRCH   6
 #define MAXDFLSRCH  3
@@ -54,5 +58,9 @@ int dn_comp(const char *exp_dn, unsigned char *comp_dn, int length,
             unsigned char **dnptrs, unsigned char **lastdnptr);
 int dn_expand(const unsigned char *msg, const unsigned char *eomorig,
               const unsigned char *comp_dn, char *exp_dn, int length);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _RESOLV_H */

@@ -1,6 +1,10 @@
 #ifndef _SYSLOG_H
 #define _SYSLOG_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Facility codes */
 #define LOG_KERN     (0<<3)
 #define LOG_USER     (1<<3)
@@ -50,5 +54,9 @@ void openlog(const char *ident, int option, int facility);
 void syslog(int priority, const char *format, ...);
 void closelog(void);
 int setlogmask(int mask);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

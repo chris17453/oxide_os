@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <time.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef volatile int sig_atomic_t;
 
 #ifndef __OXIDE_PTHREAD_T_DEFINED
@@ -132,5 +136,9 @@ int sigfillset(sigset_t *set);
 int sigaddset(sigset_t *set, int signum);
 int sigdelset(sigset_t *set, int signum);
 int sigismember(const sigset_t *set, int signum);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SIGNAL_H */

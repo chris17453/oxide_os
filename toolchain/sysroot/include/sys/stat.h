@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <time.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* File type masks */
 #define S_IFMT   0170000
 #define S_IFSOCK 0140000
@@ -81,5 +85,9 @@ mode_t umask(mode_t mask);
 int utimensat(int dirfd, const char *pathname,
               const struct timespec times[2], int flags);
 int futimens(int fd, const struct timespec times[2]);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_STAT_H */

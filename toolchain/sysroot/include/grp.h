@@ -5,6 +5,10 @@
 
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct group {
     char *gr_name;
     char *gr_passwd;
@@ -23,5 +27,9 @@ void setgrent(void);
 void endgrent(void);
 int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups);
 int initgroups(const char *user, gid_t group);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _GRP_H */

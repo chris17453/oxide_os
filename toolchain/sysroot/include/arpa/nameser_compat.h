@@ -2,6 +2,10 @@
 #ifndef _ARPA_NAMESER_COMPAT_H
 #define _ARPA_NAMESER_COMPAT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* DNS query classes */
 #define C_IN 1     /* Internet */
 #define C_CHAOS 3  /* CHAOS */
@@ -18,5 +22,9 @@
 #define T_AAAA  28  /* IPv6 address */
 #define T_SRV   33  /* Service locator */
 #define T_ANY   255 /* Any type */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _ARPA_NAMESER_COMPAT_H */

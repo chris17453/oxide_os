@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Clock IDs */
 #define CLOCK_REALTIME              0
 #define CLOCK_MONOTONIC             1
@@ -80,5 +84,9 @@ void tzset(void);
 
 /* timegm - inverse of gmtime */
 time_t timegm(struct tm *tm);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _TIME_H */

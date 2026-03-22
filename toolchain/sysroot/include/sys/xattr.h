@@ -3,6 +3,10 @@
 
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define XATTR_CREATE  1
 #define XATTR_REPLACE 2
 
@@ -18,5 +22,9 @@ ssize_t flistxattr(int fd, char *list, size_t size);
 int removexattr(const char *path, const char *name);
 int lremovexattr(const char *path, const char *name);
 int fremovexattr(int fd, const char *name);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_XATTR_H */

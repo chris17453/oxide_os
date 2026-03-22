@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <signal.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     short flags;
     pid_t pgroup;
@@ -51,5 +55,9 @@ int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *file_actions,
                                       int fildes);
 int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *file_actions,
                                      int fildes, int newfildes);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SPAWN_H */

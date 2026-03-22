@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <signal.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* idtype_t for waitid */
 typedef enum {
     P_ALL = 0,
@@ -33,5 +37,9 @@ pid_t waitpid(pid_t pid, int *wstatus, int options);
 int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
 pid_t wait3(int *wstatus, int options, void *rusage);
 pid_t wait4(pid_t pid, int *wstatus, int options, void *rusage);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_WAIT_H */

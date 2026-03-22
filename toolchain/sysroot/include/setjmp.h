@@ -3,6 +3,10 @@
 #ifndef _SETJMP_H
 #define _SETJMP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* jmp_buf: saves rbx, rbp, r12-r15, rsp, rip (8 registers * 8 bytes = 64 bytes)
    Plus signal mask storage */
 typedef long jmp_buf[8];
@@ -16,5 +20,9 @@ void _longjmp(jmp_buf env, int val) __attribute__((noreturn));
 
 int sigsetjmp(sigjmp_buf env, int savesigs);
 void siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SETJMP_H */

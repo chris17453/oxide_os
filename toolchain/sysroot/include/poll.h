@@ -3,6 +3,10 @@
 #ifndef _POLL_H
 #define _POLL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct pollfd {
     int fd;
     short events;
@@ -23,5 +27,9 @@ typedef unsigned long nfds_t;
 #define POLLWRBAND  0x0200
 
 int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _POLL_H */

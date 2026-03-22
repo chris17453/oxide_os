@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Protection flags */
 #define PROT_NONE   0x0
 #define PROT_READ   0x1
@@ -60,5 +64,9 @@ int mincore(void *addr, size_t length, unsigned char *vec);
 int shm_open(const char *name, int oflag, mode_t mode);
 int shm_unlink(const char *name);
 int posix_madvise(void *addr, size_t len, int advice);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SYS_MMAN_H */

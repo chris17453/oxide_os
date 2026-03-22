@@ -40,4 +40,12 @@ typedef int fd_t;
 /* Pull in select types (fd_set, FD_SETSIZE, etc.) as glibc does */
 #include <sys/select.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* _SYS_TYPES_H */
