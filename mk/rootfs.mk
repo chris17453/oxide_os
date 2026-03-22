@@ -163,7 +163,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/su" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/su" $(TARGET_DIR)/mnt/root/bin/su && sudo ln -sf /bin/su $(TARGET_DIR)/mnt/root/bin/sudo || true && \
-	for prog in gwbasic curses-demo tls-test thread-test dyntest dynlink-test dynlink-ncurses-test dynlink-suite mmap-write-test shm-test shm-fork-test ipc-suite ssh sshd rdpd service networkd resolvd sntpd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic curses-demo tls-test thread-test dyntest dynlink-test dynlink-ncurses-test dynlink-suite mmap-write-test shm-test shm-fork-test ipc-suite iconv-test dns-resolver-test unix-socket-test ssh sshd rdpd service networkd resolvd sntpd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/ld-oxide" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/ld-oxide" $(TARGET_DIR)/mnt/root/lib/ld-oxide.so.1 || true && \

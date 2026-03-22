@@ -179,6 +179,24 @@ shm-fork-test: toolchain
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/shm-fork-test userspace/tests/shm-fork-test.c
 	@echo "Cross-process SHM test built: $(USERSPACE_OUT_RELEASE)/shm-fork-test"
 
+# — PulseForge: iconv-test — character set conversion test suite
+iconv-test: toolchain
+	@echo "Building iconv test suite..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/iconv-test userspace/tests/iconv-test.c
+	@echo "iconv test suite built: $(USERSPACE_OUT_RELEASE)/iconv-test"
+
+# — ShadePacket: dns-resolver-test — DNS resolver functions test suite
+dns-resolver-test: toolchain
+	@echo "Building DNS resolver test suite..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/dns-resolver-test userspace/tests/dns-resolver-test.c
+	@echo "DNS resolver test suite built: $(USERSPACE_OUT_RELEASE)/dns-resolver-test"
+
+# — ShadePacket: unix-socket-test — AF_UNIX domain socket test suite
+unix-socket-test: toolchain
+	@echo "Building AF_UNIX socket test suite..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/unix-socket-test userspace/tests/unix-socket-test.c
+	@echo "AF_UNIX socket test suite built: $(USERSPACE_OUT_RELEASE)/unix-socket-test"
+
 # — CrashBloom: dynlink-suite — comprehensive dynamic linking test suite
 dynlink-suite: toolchain
 	@echo "Building dynamic linking test suite..."
