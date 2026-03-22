@@ -85,6 +85,8 @@ struct cmsghdr {
 #define SO_BROADCAST    6
 #define SO_REUSEPORT    15
 #define SO_ACCEPTCONN   30
+#define SO_PEERCRED     17
+#define SO_PASSCRED     16
 #define SO_PASSCRED     16
 
 /* listen() backlog */

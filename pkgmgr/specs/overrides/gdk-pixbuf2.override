@@ -1,0 +1,29 @@
+# gdk-pixbuf Build Override for OXIDE OS
+# — PulseForge: "Image loading library for GTK. PNG, JPEG, TIFF, ICO."
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dpng=enabled
+  -Djpeg=disabled
+  -Dtiff=disabled
+  -Dintrospection=disabled
+  -Dman=false
+  -Dinstalled_tests=false
+  -Dtests=false
+  -Dgio_sniffing=false
+  -Dbuiltin_loaders=all
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+MAKE_TARGET="gdk-pixbuf/libgdk_pixbuf-2.0.a"
+
+CUSTOM_INSTALL_CMD="
+mkdir -p $DESTDIR/usr/lib/pkgconfig $DESTDIR/usr/include/gdk-pixbuf-2.0/gdk-pixbuf &&
+cp builddir/gdk-pixbuf/libgdk_pixbuf-2.0.a $DESTDIR/usr/lib/ &&
+cp builddir/meson-private/gdk-pixbuf-2.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp gdk-pixbuf/*.h $DESTDIR/usr/include/gdk-pixbuf-2.0/gdk-pixbuf/ 2>/dev/null;
+cp builddir/gdk-pixbuf/gdk-pixbuf-features.h $DESTDIR/usr/include/gdk-pixbuf-2.0/gdk-pixbuf/ 2>/dev/null;
+echo 'gdk-pixbuf libraries + headers installed'
+"

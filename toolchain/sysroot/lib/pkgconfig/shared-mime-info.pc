@@ -1,0 +1,6 @@
+prefix=/usr
+datadir=${prefix}/share
+
+Name: shared-mime-info
+Description: Freedesktop shared MIME database
+Version: 2.4

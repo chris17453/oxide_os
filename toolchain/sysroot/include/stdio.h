@@ -150,6 +150,10 @@ int putc_unlocked(int c, FILE *stream);
 int getchar_unlocked(void);
 int putchar_unlocked(int c);
 
+/* Memory streams */
+FILE *open_memstream(char **ptr, size_t *sizeloc);
+FILE *fmemopen(void *buf, size_t size, const char *mode);
+
 /* flockfile/funlockfile */
 void flockfile(FILE *stream);
 void funlockfile(FILE *stream);

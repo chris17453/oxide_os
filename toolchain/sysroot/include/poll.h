@@ -3,6 +3,9 @@
 #ifndef _POLL_H
 #define _POLL_H
 
+#include <time.h>
+#include <signal.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,6 +30,8 @@ typedef unsigned long nfds_t;
 #define POLLWRBAND  0x0200
 
 int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *tmo_p,
+          const sigset_t *sigmask);
 
 #ifdef __cplusplus
 }

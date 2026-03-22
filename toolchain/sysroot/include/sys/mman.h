@@ -65,6 +65,16 @@ int shm_open(const char *name, int oflag, mode_t mode);
 int shm_unlink(const char *name);
 int posix_madvise(void *addr, size_t len, int advice);
 
+/* memfd_create — anonymous memory file */
+int memfd_create(const char *name, unsigned int flags);
+#define MFD_CLOEXEC         0x0001U
+#define MFD_ALLOW_SEALING   0x0002U
+#define MFD_HUGETLB         0x0004U
+#define F_SEAL_SEAL     0x0001
+#define F_SEAL_SHRINK   0x0002
+#define F_SEAL_GROW     0x0004
+#define F_SEAL_WRITE    0x0008
+
 #ifdef __cplusplus
 }
 #endif

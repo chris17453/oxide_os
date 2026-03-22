@@ -8909,6 +8909,19 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
 
 // ============ Missing libc functions for glib link ============
 
+/// imaxabs — absolute value of intmax_t
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn imaxabs(j: i64) -> i64 {
+    if j < 0 { -j } else { j }
+}
+
+/// llroundl — round long double to nearest long long
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn llroundl(x: f64) -> i64 {
+    // long double = f64 on our platform
+    if x >= 0.0 { (x + 0.5) as i64 } else { (x - 0.5) as i64 }
+}
+
 /// utimes — set file access and modification times
 /// — PulseForge: Wraps utimensat syscall (280). Converts timeval to timespec.
 #[unsafe(no_mangle)]
