@@ -27,8 +27,8 @@ use spin::{Mutex, MutexGuard};
 #[global_allocator]
 pub static HEAP_ALLOCATOR: SlabAllocator = SlabAllocator::new();
 
-/// Heap size: 16 MB
-pub const HEAP_SIZE: usize = 32 * 1024 * 1024; // 32MB for large executables like Python
+/// — NeonVale: 128MB heap for GTK (15MB text + data + page tables per process)
+pub const HEAP_SIZE: usize = 128 * 1024 * 1024;
 
 /// Static heap storage (temporary until we have proper MM)
 pub static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
