@@ -34,6 +34,8 @@ CLANG_RESOURCE_DIR=$("$CLANG" -print-resource-dir 2>/dev/null)
 # Default flags for OXIDE target (static mode — overridden after arg parsing for -dynamic)
 OXIDE_CFLAGS=(
     "--target=x86_64-oxide-elf"
+    "-D__oxide__=1"
+    "-include" "$SYSROOT/include/oxide-compat.h"
     "-fno-stack-protector"
     "-fno-pic"
     "-fno-pie"
@@ -207,6 +209,8 @@ done
 if $DYNAMIC; then
     OXIDE_CFLAGS=(
         "--target=x86_64-oxide-elf"
+        "-D__oxide__=1"
+        "-include" "$SYSROOT/include/oxide-compat.h"
         "-fno-stack-protector"
         "-fPIC"
         "-mno-red-zone"

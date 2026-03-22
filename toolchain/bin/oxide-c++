@@ -26,6 +26,8 @@ fi
 # Default flags for OXIDE target
 OXIDE_CXXFLAGS=(
     "--target=x86_64-oxide-elf"
+    "-D__oxide__=1"
+    "-include" "$SYSROOT/include/oxide-compat.h"
     "-fno-stack-protector"
     "-fno-pic"
     "-fno-pie"
