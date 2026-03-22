@@ -65,9 +65,9 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
 int system(const char *command);
 
 /* Temporary files */
-char *mktemp(char *template);
-int mkstemp(char *template);
-char *mkdtemp(char *template);
+char *mktemp(char *__tmpl);
+int mkstemp(char *__tmpl);
+char *mkdtemp(char *__tmpl);
 
 /* Realpath */
 char *realpath(const char *path, char *resolved_path);

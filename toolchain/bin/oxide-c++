@@ -25,8 +25,7 @@ fi
 
 # Default flags for OXIDE target
 OXIDE_CXXFLAGS=(
-    "--target=x86_64-unknown-none-elf"
-    "-ffreestanding"
+    "--target=x86_64-oxide-elf"
     "-fno-stack-protector"
     "-fno-pic"
     "-fno-pie"
@@ -36,6 +35,9 @@ OXIDE_CXXFLAGS=(
     "-nostdinc++"
     "-fno-exceptions"
     "-fno-rtti"
+    "-isystem" "/usr/include/c++/14"
+    "-isystem" "/usr/include/c++/14/x86_64-redhat-linux"
+    "-isystem" "$("$CLANGXX" -print-resource-dir 2>/dev/null)/include"
     "-isystem" "$SYSROOT/include"
 )
 
