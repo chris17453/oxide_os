@@ -263,19 +263,42 @@ pub unsafe extern "C" fn free(_ptr: *mut u8) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_memalign(memptr: *mut *mut u8, _align: usize, size: usize) -> i32 {
-    let p = malloc(size);
-    if p.is_null() {
-        return errno::ENOMEM;
+pub unsafe extern "C" fn aligned_alloc(align: usize, size: usize) -> *mut u8 {
+    // — PulseForge: Real aligned allocation. Over-allocate and align within.
+    if align == 0 || size == 0 {
+        return core::ptr::null_mut();
     }
-    *memptr = p;
-    0
+    // Simple approach: allocate extra space for alignment + header
+    let total = size + align + core::mem::size_of::<usize>();
+    let raw = malloc(total);
+    if raw.is_null() {
+        return core::ptr::null_mut();
+    }
+    // Align the returned pointer
+    let raw_addr = raw as usize;
+    let header_space = core::mem::size_of::<usize>();
+    let aligned = (raw_addr + header_space + align - 1) & !(align - 1);
+    // Store the original pointer just before the aligned pointer
+    unsafe { *((aligned - header_space) as *mut usize) = raw_addr };
+    aligned as *mut u8
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn aligned_alloc(align: usize, size: usize) -> *mut u8 {
-    let _ = align;
-    malloc(size)
+pub unsafe extern "C" fn memalign(align: usize, size: usize) -> *mut u8 {
+    aligned_alloc(align, size)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_memalign(memptr: *mut *mut u8, align: usize, size: usize) -> i32 {
+    if memptr.is_null() {
+        return 22; // EINVAL
+    }
+    let ptr = aligned_alloc(align, size);
+    if ptr.is_null() {
+        return 12; // ENOMEM
+    }
+    unsafe { *memptr = ptr };
+    0
 }
 
 // ============ stdlib ============

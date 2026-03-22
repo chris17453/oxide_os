@@ -1,9 +1,17 @@
 //! Relocation handling
+//!
+//! — WireSaint: now stores raw relocation type numbers instead of the x86_64-specific
+//! enum. The apply function dispatches through a registered arch callback so the same
+//! dlopen code works on AArch64/MIPS64 without touching this file. The x86_64 enum
+//! is retained for backward compatibility and debug printing.
 
 #![allow(non_camel_case_types)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-/// x86_64 relocation types
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+/// x86_64 relocation types — kept for debug display and backward compat
+/// — WireSaint: these are x86_64-specific. The apply path uses raw u32 now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum RelocationType {
@@ -105,13 +113,18 @@ impl RelocationType {
     }
 }
 
-/// Relocation entry
+/// Relocation entry — now stores raw type for arch-agnostic dispatch
+/// — WireSaint: r_type_raw is the ELF relocation type number straight from
+/// the binary. The arch-specific callback interprets it. We keep r_type
+/// as Optional<RelocationType> for debug convenience on x86_64.
 #[derive(Debug, Clone)]
 pub struct Relocation {
     /// Offset to apply relocation
     pub offset: u64,
-    /// Relocation type
-    pub r_type: RelocationType,
+    /// Raw relocation type from ELF (arch-specific numbering)
+    pub r_type_raw: u32,
+    /// Parsed x86_64 relocation type (None if not x86_64 or unknown type)
+    pub r_type: Option<RelocationType>,
     /// Symbol index
     pub sym_idx: u32,
     /// Addend
@@ -135,11 +148,13 @@ impl Relocation {
             data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
         ]);
 
-        let r_type = RelocationType::from_raw((info & 0xFFFFFFFF) as u32)?;
+        let raw = (info & 0xFFFFFFFF) as u32;
+        let r_type = RelocationType::from_raw(raw);
         let sym_idx = (info >> 32) as u32;
 
         Some(Relocation {
             offset,
+            r_type_raw: raw,
             r_type,
             sym_idx,
             addend,
@@ -159,11 +174,13 @@ impl Relocation {
             data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]);
 
-        let r_type = RelocationType::from_raw((info & 0xFFFFFFFF) as u32)?;
+        let raw = (info & 0xFFFFFFFF) as u32;
+        let r_type = RelocationType::from_raw(raw);
         let sym_idx = (info >> 32) as u32;
 
         Some(Relocation {
             offset,
+            r_type_raw: raw,
             r_type,
             sym_idx,
             addend: 0,
@@ -171,7 +188,28 @@ impl Relocation {
     }
 }
 
-/// Apply a relocation
+/// Arch-specific relocation callback type
+/// — WireSaint: registered at kernel init. Takes (base, offset, r_type_raw,
+/// sym_value, addend, got) and returns Ok(()) or Err(msg).
+pub type RelocationApplyFn = fn(usize, u64, u32, usize, i64, usize) -> Result<(), &'static str>;
+
+/// Registered relocation callback — set during arch init
+/// — WireSaint: stored as a function pointer cast to usize for AtomicUsize.
+/// Zero means "use built-in x86_64 fallback".
+static RELOC_APPLY_FN: AtomicUsize = AtomicUsize::new(0);
+
+/// Register an architecture-specific relocation handler
+/// — WireSaint: called once during kernel init. The handler implements
+/// the ElfRelocation trait's apply_relocation method.
+pub fn register_relocation_handler(handler: RelocationApplyFn) {
+    RELOC_APPLY_FN.store(handler as usize, Ordering::Release);
+}
+
+/// Apply a relocation — dispatches through registered arch handler
+///
+/// — WireSaint: if an arch handler is registered, it gets first crack.
+/// Otherwise falls back to the built-in x86_64 implementation for backward
+/// compatibility. Once all arches register handlers, the fallback becomes dead code.
 ///
 /// - `base`: Base load address of the object
 /// - `reloc`: The relocation to apply
@@ -185,106 +223,97 @@ pub fn apply_relocation(
     sym_value: usize,
     got: usize,
 ) -> Result<(), &'static str> {
+    // — WireSaint: try registered arch handler first
+    let handler_ptr = RELOC_APPLY_FN.load(Ordering::Acquire);
+    if handler_ptr != 0 {
+        let handler: RelocationApplyFn = unsafe { core::mem::transmute(handler_ptr) };
+        return handler(base, reloc.offset, reloc.r_type_raw, sym_value, reloc.addend, got);
+    }
+
+    // — WireSaint: fallback to built-in x86_64 implementation
+    apply_relocation_x86_64(base, reloc, sym_value, got)
+}
+
+/// Built-in x86_64 relocation implementation (fallback)
+/// — WireSaint: the original implementation, kept as fallback for backward compat.
+/// Arch-trait dispatch bypasses this entirely once registered.
+fn apply_relocation_x86_64(
+    base: usize,
+    reloc: &Relocation,
+    sym_value: usize,
+    got: usize,
+) -> Result<(), &'static str> {
     let target = base + reloc.offset as usize;
 
-    // S = symbol value
-    // A = addend
-    // P = place (target address)
-    // B = base address
-    // G = GOT entry address
-    // GOT = GOT base address
+    // S = symbol value, A = addend, P = place, B = base, GOT = GOT base
+    match reloc.r_type_raw {
+        // R_X86_64_NONE
+        0 => {}
 
-    match reloc.r_type {
-        RelocationType::R_X86_64_NONE => {
-            // No operation
-        }
-
-        RelocationType::R_X86_64_64 => {
-            // S + A
+        // R_X86_64_64: S + A
+        1 => {
             let value = sym_value.wrapping_add(reloc.addend as usize);
-            unsafe {
-                *(target as *mut u64) = value as u64;
-            }
+            unsafe { *(target as *mut u64) = value as u64; }
         }
 
-        RelocationType::R_X86_64_PC32 => {
-            // S + A - P
+        // R_X86_64_PC32: S + A - P
+        2 => {
             let value = (sym_value as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe {
-                *(target as *mut i32) = value as i32;
-            }
+            unsafe { *(target as *mut i32) = value as i32; }
         }
 
-        RelocationType::R_X86_64_PLT32 => {
-            // L + A - P (where L is PLT entry, usually same as S for lazy binding)
+        // R_X86_64_PLT32: L + A - P
+        4 => {
             let value = (sym_value as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe {
-                *(target as *mut i32) = value as i32;
-            }
+            unsafe { *(target as *mut i32) = value as i32; }
         }
 
-        RelocationType::R_X86_64_COPY => {
-            // Copy symbol contents - this is handled by the loader, not here
+        // R_X86_64_COPY
+        5 => {
             return Err("R_X86_64_COPY not supported in apply_relocation");
         }
 
-        RelocationType::R_X86_64_GLOB_DAT | RelocationType::R_X86_64_JUMP_SLOT => {
-            // S (direct symbol address)
-            unsafe {
-                *(target as *mut u64) = sym_value as u64;
-            }
+        // R_X86_64_GLOB_DAT (6) / R_X86_64_JUMP_SLOT (7): S
+        6 | 7 => {
+            unsafe { *(target as *mut u64) = sym_value as u64; }
         }
 
-        RelocationType::R_X86_64_RELATIVE => {
-            // B + A
+        // R_X86_64_RELATIVE: B + A
+        8 => {
             let value = (base as i64).wrapping_add(reloc.addend) as u64;
-            unsafe {
-                *(target as *mut u64) = value;
-            }
+            unsafe { *(target as *mut u64) = value; }
         }
 
-        RelocationType::R_X86_64_GOTPCREL
-        | RelocationType::R_X86_64_GOTPCRELX
-        | RelocationType::R_X86_64_REX_GOTPCRELX => {
-            // G + GOT + A - P
-            // Simplified: just compute PC-relative to GOT entry containing S
+        // R_X86_64_GOTPCREL (9) / GOTPCRELX (41) / REX_GOTPCRELX (42)
+        9 | 41 | 42 => {
             let value = (got as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe {
-                *(target as *mut i32) = value as i32;
-            }
+            unsafe { *(target as *mut i32) = value as i32; }
         }
 
-        RelocationType::R_X86_64_32 => {
-            // S + A (truncated to 32 bits, zero-extended)
+        // R_X86_64_32: S + A (zero-extended)
+        10 => {
             let value = sym_value.wrapping_add(reloc.addend as usize) as u32;
-            unsafe {
-                *(target as *mut u32) = value;
-            }
+            unsafe { *(target as *mut u32) = value; }
         }
 
-        RelocationType::R_X86_64_32S => {
-            // S + A (truncated to 32 bits, sign-extended)
+        // R_X86_64_32S: S + A (sign-extended)
+        11 => {
             let value = (sym_value as i64).wrapping_add(reloc.addend) as i32;
-            unsafe {
-                *(target as *mut i32) = value;
-            }
+            unsafe { *(target as *mut i32) = value; }
         }
 
-        RelocationType::R_X86_64_IRELATIVE => {
-            // Call indirect function: value = (*)(B + A)()
-            // The result of calling the function at B + A becomes the relocation value
+        // R_X86_64_IRELATIVE: indirect function resolver
+        37 => {
             let func_addr = (base as i64).wrapping_add(reloc.addend) as usize;
             let resolver: extern "C" fn() -> usize = unsafe { core::mem::transmute(func_addr) };
             let resolved = resolver();
-            unsafe {
-                *(target as *mut u64) = resolved as u64;
-            }
+            unsafe { *(target as *mut u64) = resolved as u64; }
         }
 
         _ => {

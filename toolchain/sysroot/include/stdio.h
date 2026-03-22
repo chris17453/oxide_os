@@ -8,7 +8,10 @@
 #include <sys/types.h>
 
 /* File operations (declarations match libc implementation) */
+#ifndef __FILE_defined
+#define __FILE_defined
 typedef struct _FILE FILE;
+#endif
 
 /* Standard streams */
 extern FILE *stdin;
@@ -42,6 +45,7 @@ char *gets(char *s);
 
 /* File I/O */
 FILE *fopen(const char *pathname, const char *mode);
+FILE *freopen(const char *pathname, const char *mode, FILE *stream);
 FILE *fdopen(int fd, const char *mode);
 int fclose(FILE *stream);
 int fflush(FILE *stream);
@@ -98,8 +102,8 @@ FILE *popen(const char *command, const char *type);
 int pclose(FILE *stream);
 
 /* getline */
-ssize_t getline(char **lineptr, size_t *n, FILE *stream);
-ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
+long getline(char **lineptr, size_t *n, FILE *stream);
+long getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 
 /* Filename max */
 #define FILENAME_MAX 4096
@@ -110,5 +114,32 @@ ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 /* FOPEN_MAX */
 #define FOPEN_MAX    16
 
-#endif /* _STDIO_H */
+/* putc */
 int putc(int c, FILE *stream);
+
+/* fseeko/ftello (64-bit offset versions) */
+int fseeko(FILE *stream, long offset, int whence);
+long ftello(FILE *stream);
+int fseeko64(FILE *stream, long long offset, int whence);
+long long ftello64(FILE *stream);
+FILE *fopen64(const char *pathname, const char *mode);
+FILE *freopen64(const char *pathname, const char *mode, FILE *stream);
+
+/* fgetpos/fsetpos */
+typedef struct { long long __pos; } fpos_t;
+int fgetpos(FILE *stream, fpos_t *pos);
+int fsetpos(FILE *stream, const fpos_t *pos);
+
+/* dprintf/vdprintf */
+int dprintf(int fd, const char *format, ...);
+int vdprintf(int fd, const char *format, va_list ap);
+
+/* fread_unlocked/fgets_unlocked */
+size_t fread_unlocked(void *ptr, size_t size, size_t nmemb, FILE *stream);
+
+/* flockfile/funlockfile */
+void flockfile(FILE *stream);
+void funlockfile(FILE *stream);
+int ftrylockfile(FILE *stream);
+
+#endif /* _STDIO_H */

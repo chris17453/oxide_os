@@ -33,16 +33,24 @@ pub const EPOLL_CTL_MOD: i32 = 3;
 const MAX_EPOLL_ENTRIES: usize = 256;
 
 /// An entry in the epoll interest list
+/// — ShadePacket: tracks last-reported ready state for edge-triggered mode.
+/// EPOLLET entries only fire when transitioning from not-ready to ready.
 #[derive(Clone)]
 pub struct EpollEntry {
     /// The monitored file descriptor number
     pub fd: i32,
     /// The file handle for polling
     pub file: Arc<File>,
-    /// Events of interest
+    /// Events of interest (EPOLLIN, EPOLLOUT, EPOLLET, etc.)
     pub events: u32,
     /// User data (passed through untouched)
     pub data: u64,
+    /// Last reported ready events (for edge-triggered mode)
+    /// — ShadePacket: 0 = never reported. When EPOLLET is set, an event is only
+    /// returned if it wasn't in `last_ready` (state transition detection).
+    pub last_ready: u32,
+    /// Whether this entry is disabled (EPOLLONESHOT after first trigger)
+    pub disabled: bool,
 }
 
 /// epoll event structure (matches Linux struct epoll_event)
@@ -80,6 +88,8 @@ impl EpollInstance {
             file,
             events,
             data,
+            last_ready: 0,
+            disabled: false,
         });
         Ok(())
     }
@@ -97,12 +107,15 @@ impl EpollInstance {
     }
 
     /// Modify events for a registered file descriptor
+    /// — ShadePacket: also re-enables EPOLLONESHOT entries
     pub fn modify(&mut self, fd: i32, events: u32, data: u64) -> VfsResult<()> {
         let entry = self.entries.iter_mut().find(|e| e.fd == fd);
         match entry {
             Some(e) => {
                 e.events = events;
                 e.data = data;
+                e.disabled = false; // re-enable for EPOLLONESHOT
+                e.last_ready = 0;   // reset edge state
                 Ok(())
             }
             None => Err(VfsError::NotFound),
@@ -110,14 +123,16 @@ impl EpollInstance {
     }
 
     /// Poll all registered fds and return ready events
-    pub fn wait(&self, max_events: usize) -> Vec<EpollEvent> {
+    /// — ShadePacket: handles EPOLLET (edge-triggered) and EPOLLONESHOT.
+    /// Edge-triggered: only report events that are NEW since last wait.
+    /// One-shot: disable the entry after first trigger (re-enable via EPOLL_CTL_MOD).
+    pub fn wait(&mut self, max_events: usize) -> Vec<EpollEvent> {
         let mut ready = Vec::new();
         let limit = max_events.min(self.entries.len());
 
-        for entry in &self.entries {
-            if ready.len() >= limit {
-                break;
-            }
+        for entry in self.entries.iter_mut() {
+            if ready.len() >= limit { break; }
+            if entry.disabled { continue; }
 
             let mut revents = 0u32;
 
@@ -129,10 +144,33 @@ impl EpollInstance {
             }
 
             if revents != 0 {
+                // — ShadePacket: edge-triggered mode — only report if this is a
+                // NEW event (wasn't in last_ready). Level-triggered reports every time.
+                let is_edge = entry.events & EPOLLET != 0;
+                let new_events = revents & !entry.last_ready;
+
+                if is_edge && new_events == 0 {
+                    // — ShadePacket: no new edges — skip this entry
+                    continue;
+                }
+
+                let report_events = if is_edge { new_events } else { revents };
+
                 ready.push(EpollEvent {
-                    events: revents,
+                    events: report_events,
                     data: entry.data,
                 });
+
+                entry.last_ready = revents;
+
+                // — ShadePacket: one-shot mode — disable after first trigger
+                if entry.events & EPOLLONESHOT != 0 {
+                    entry.disabled = true;
+                }
+            } else {
+                // — ShadePacket: fd is no longer ready — reset last_ready so the
+                // next time it becomes ready, edge-triggered will fire again.
+                entry.last_ready = 0;
             }
         }
 

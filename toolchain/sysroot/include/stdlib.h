@@ -8,7 +8,10 @@
 /* Process control */
 void exit(int status) __attribute__((noreturn));
 void _exit(int status) __attribute__((noreturn));
+void _Exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
+int atexit(void (*function)(void));
+int on_exit(void (*function)(int, void *), void *arg);
 
 /* Memory allocation */
 void *malloc(size_t size);
@@ -85,5 +88,6 @@ int ptsname_r(int fd, char *buf, size_t buflen);
 
 /* Constants */
 #define RAND_MAX 0x7FFFFFFF
+#define MB_CUR_MAX 4
 
 #endif /* _STDLIB_H */

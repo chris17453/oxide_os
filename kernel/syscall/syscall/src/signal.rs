@@ -177,9 +177,15 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
                 return errno::EFAULT;
             }
             if let Some(old_action) = m.sigaction(sig) {
+                // — SableWire: Alignment-safe write — userspace pointers are feral,
+                // never trust them to be aligned. copy_nonoverlapping doesn't care.
                 unsafe {
                     os_core::user_access_begin();
-                    core::ptr::write_volatile(oldact_ptr as *mut SigAction, *old_action);
+                    core::ptr::copy_nonoverlapping(
+                        old_action as *const SigAction as *const u8,
+                        oldact_ptr as *mut u8,
+                        core::mem::size_of::<SigAction>(),
+                    );
                     os_core::user_access_end();
                 }
             }
@@ -193,11 +199,18 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
             // — ColdCipher: STAC/CLAC bracket — reading from user memory without
             // this is a SMAP violation waiting to happen. One #PF and you're debugging
             // a triple fault at 3 AM. Ask me how I know.
+            // — SableWire: Misaligned user pointer + read_volatile = instant panic.
+            // copy_nonoverlapping is the only safe passage through alignment hell.
             let action = unsafe {
                 os_core::user_access_begin();
-                let val = core::ptr::read_volatile(act_ptr as *const SigAction);
+                let mut val = core::mem::MaybeUninit::<SigAction>::uninit();
+                core::ptr::copy_nonoverlapping(
+                    act_ptr as *const u8,
+                    val.as_mut_ptr() as *mut u8,
+                    core::mem::size_of::<SigAction>(),
+                );
                 os_core::user_access_end();
-                val
+                val.assume_init()
             };
             m.set_sigaction(sig, action);
         }
@@ -226,9 +239,16 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
             if oldset_ptr < 0x1000 || oldset_ptr >= 0x0000_8000_0000_0000 {
                 return errno::EFAULT;
             }
+            // — ColdCipher: Alignment is a luxury userspace doesn't guarantee.
+            // copy_nonoverlapping writes byte-by-byte if it has to. No panics.
             unsafe {
+                let tmp = m.signal_mask.clone();
                 os_core::user_access_begin();
-                core::ptr::write_volatile(oldset_ptr as *mut SigSet, m.signal_mask.clone());
+                core::ptr::copy_nonoverlapping(
+                    &tmp as *const SigSet as *const u8,
+                    oldset_ptr as *mut u8,
+                    core::mem::size_of::<SigSet>(),
+                );
                 os_core::user_access_end();
             }
         }
@@ -239,11 +259,18 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
                 return errno::EFAULT;
             }
             // — ColdCipher: STAC/CLAC bracket for user pointer read.
+            // — ColdCipher: User pointers lie about alignment. MaybeUninit + copy
+            // is the only way to read a struct without trusting the caller.
             let new_set = unsafe {
                 os_core::user_access_begin();
-                let val = core::ptr::read_volatile(set_ptr as *const SigSet);
+                let mut val = core::mem::MaybeUninit::<SigSet>::uninit();
+                core::ptr::copy_nonoverlapping(
+                    set_ptr as *const u8,
+                    val.as_mut_ptr() as *mut u8,
+                    core::mem::size_of::<SigSet>(),
+                );
                 os_core::user_access_end();
-                val
+                val.assume_init()
             };
 
             let how_enum = match SigHow::from_i32(how) {
@@ -286,9 +313,15 @@ pub fn sys_sigpending(set_ptr: u64) -> i64 {
 
         // — ColdCipher: STAC/CLAC bracket for writing pending signal set to
         // user memory. Without this, SMAP says no and the kernel says goodbye.
+        // — ColdCipher: User buffer alignment is a prayer, not a promise.
+        // copy_nonoverlapping doesn't need your faith — just byte addresses.
         unsafe {
             os_core::user_access_begin();
-            core::ptr::write_volatile(set_ptr as *mut SigSet, pending);
+            core::ptr::copy_nonoverlapping(
+                &pending as *const SigSet as *const u8,
+                set_ptr as *mut u8,
+                core::mem::size_of::<SigSet>(),
+            );
             os_core::user_access_end();
         }
 
@@ -321,11 +354,17 @@ pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
 
     // Read the temporary mask from userspace and install it atomically.
     // — WireSaint: stac/clac bracket because mask_ptr is a user pointer.
+    // — WireSaint: Alignment-agnostic read from user stack. Trust nothing.
     let temp_mask = unsafe {
         os_core::user_access_begin();
-        let m = core::ptr::read_volatile(mask_ptr as *const SigSet);
+        let mut m = core::mem::MaybeUninit::<SigSet>::uninit();
+        core::ptr::copy_nonoverlapping(
+            mask_ptr as *const u8,
+            m.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<SigSet>(),
+        );
         os_core::user_access_end();
-        m
+        m.assume_init()
     };
 
     let old_mask = {
@@ -444,8 +483,18 @@ pub fn sys_sigreturn() -> i64 {
     // Enable user memory access (SMAP)
     unsafe { os_core::user_access_begin(); }
 
-    // Read the signal frame from user stack
-    let frame = unsafe { core::ptr::read_volatile(frame_ptr) };
+    // — GraveShift: Signal frames live on the user stack which can be
+    // misaligned after signal trampoline shenanigans. copy_nonoverlapping
+    // doesn't care about alignment — unlike read_volatile which panics.
+    let frame = unsafe {
+        let mut f = core::mem::MaybeUninit::<SignalFrame>::uninit();
+        core::ptr::copy_nonoverlapping(
+            frame_ptr as *const u8,
+            f.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<SignalFrame>(),
+        );
+        f.assume_init()
+    };
 
     // Disable user memory access
     unsafe { os_core::user_access_end(); }
@@ -490,20 +539,33 @@ pub fn sys_sigaltstack(ss_ptr: u64, old_ss_ptr: u64) -> i64 {
             _pad: 0,
             ss_size: 0,
         };
+        // — SableWire: User pointer for old alt-stack — alignment unknown,
+        // intent malicious. Byte-copy is the only safe play.
         unsafe {
             os_core::user_access_begin();
-            core::ptr::write_volatile(old_ss_ptr as *mut StackT, old);
+            core::ptr::copy_nonoverlapping(
+                &old as *const StackT as *const u8,
+                old_ss_ptr as *mut u8,
+                core::mem::size_of::<StackT>(),
+            );
             os_core::user_access_end();
         }
     }
 
     // Set the new stack if provided
     if ss_ptr != 0 && ss_ptr < 0x0000_8000_0000_0000 {
+        // — SableWire: Reading alt-stack config from user memory. Alignment
+        // is a fairy tale userspace tells itself to sleep at night.
         let ss: StackT = unsafe {
             os_core::user_access_begin();
-            let val = core::ptr::read_volatile(ss_ptr as *const StackT);
+            let mut val = core::mem::MaybeUninit::<StackT>::uninit();
+            core::ptr::copy_nonoverlapping(
+                ss_ptr as *const u8,
+                val.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<StackT>(),
+            );
             os_core::user_access_end();
-            val
+            val.assume_init()
         };
 
         // Validate
@@ -529,11 +591,18 @@ pub fn read_sigset(ptr: usize) -> Option<SigSet> {
         return None;
     }
 
+    // — ColdCipher: Generic SigSet reader — user pointers can be any alignment.
+    // MaybeUninit + copy_nonoverlapping is the gospel of safe user reads.
     unsafe {
         os_core::user_access_begin();
-        let sigset = core::ptr::read_volatile(ptr as *const SigSet);
+        let mut sigset = core::mem::MaybeUninit::<SigSet>::uninit();
+        core::ptr::copy_nonoverlapping(
+            ptr as *const u8,
+            sigset.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<SigSet>(),
+        );
         os_core::user_access_end();
-        Some(sigset)
+        Some(sigset.assume_init())
     }
 }
 

@@ -1,7 +1,7 @@
 # — Hexline: Toolchain and package manager builds.
 # Cross-compilers, sysroot wrangling, and the dark art of getting C code to link against our kernel.
 
-.PHONY: toolchain install-toolchain test-toolchain clean-toolchain external-libs pkgmgr-binaries pkgmgr-sysroot-deps pkgmgr-ncurses pkgmgr-readline pkgmgr-vim pkgmgr-python pkgmgr-rebuild-vim pkgmgr-rebuild-python clean-pkgmgr zlib openssl xz zstd tls-test thread-test
+.PHONY: toolchain install-toolchain test-toolchain clean-toolchain external-libs pkgmgr-binaries pkgmgr-sysroot-deps pkgmgr-ncurses pkgmgr-readline pkgmgr-vim pkgmgr-python pkgmgr-rebuild-vim pkgmgr-rebuild-python pkgmgr-make pkgmgr-binutils pkgmgr-gcc clean-pkgmgr zlib openssl xz zstd tls-test thread-test
 
 # — PulseForge: Stable staging directory for package manager outputs.
 # oxdnf builds go here so the rootfs pipeline has a deterministic path.
@@ -23,6 +23,15 @@ toolchain:
 	@echo ""
 	@echo "Installing toolchain components to sysroot..."
 	@mkdir -p toolchain/sysroot/lib
+	@# — PulseForge: build CRT object files for OXIDE target.
+	@# crt0.o = entry point (_start → main → exit)
+	@# crti.o/crtn.o = .init/.fini section prologues/epilogues (for constructors/destructors)
+	@# crtbegin.o/crtend.o = .ctors/.dtors section markers (GCC collect2 needs these)
+	@for crt in crt0 crti crtn crtbegin crtend; do \
+		if [ -f "toolchain/crt/$$crt.S" ]; then \
+			clang --target=x86_64-oxide-elf -c -o "toolchain/sysroot/lib/$$crt.o" "toolchain/crt/$$crt.S"; \
+		fi; \
+	done
 	@# Copy libc.a to sysroot (staticlib produces native ELF objects, rlib has LLVM bitcode)
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.a" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/liblibc.a" "toolchain/sysroot/lib/liboxide_libc.a"; \
@@ -33,6 +42,48 @@ toolchain:
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/libpthread.a" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/libpthread.a" "toolchain/sysroot/lib/libpthread.a"; \
 	fi
+	@# — IronGhost: Build shared .so from every PIC static archive in the sysroot.
+	@# Extract .o files, relink as ET_DYN. Same objects, different packaging.
+	@# Build libc.so FIRST (no deps), then all others link against it.
+	@echo "  Building shared libraries from static archives..."
+	@# Step 1: build libc.so first (it has no dependencies)
+	@# — IronGhost: compiler-builtins provides WEAK HIDDEN versions of memcpy/memset/
+	@# strlen/memmove/memcmp. These shadow our GLOBAL DEFAULT versions from c_exports.rs
+	@# and can't be exported from .so (HIDDEN visibility). We remove the conflicting
+	@# compiler-builtins .o files so our strong definitions win.
+	@if [ -f "toolchain/sysroot/lib/liboxide_libc.a" ]; then \
+		echo "    liboxide_libc.a -> libc.so"; \
+		TMPDIR=$$(mktemp -d) && cd $$TMPDIR && \
+		llvm-ar x "$(CURDIR)/toolchain/sysroot/lib/liboxide_libc.a" && \
+		for o in compiler_builtins-*.o; do \
+			[ -f "$$o" ] || continue; \
+			if llvm-nm "$$o" 2>/dev/null | grep -qE "^[0-9a-f]+ W (memcpy|memset|memmove|strlen|memcmp|bcmp)$$"; then \
+				rm "$$o"; \
+			fi; \
+		done && \
+		ld.lld --shared --export-dynamic -o "$(CURDIR)/toolchain/sysroot/lib/libc.so" *.o \
+			--no-undefined-version -soname libc.so 2>/dev/null && \
+		cd "$(CURDIR)" && rm -rf $$TMPDIR && \
+		strip toolchain/sysroot/lib/libc.so 2>/dev/null || true; \
+	fi
+	@# Step 2: build all other .so files, linking against libc.so
+	@# — IronGhost: --whole-archive so all symbols are exported.
+	@for archive in toolchain/sysroot/lib/lib*.a; do \
+		[ -f "$$archive" ] || continue; \
+		BASENAME=$$(basename "$$archive" .a); \
+		SONAME=$${BASENAME#lib}; \
+		[ "$$SONAME" = "oxide_libc" ] && continue; \
+		SOFILE="toolchain/sysroot/lib/lib$${SONAME}.so"; \
+		[ -L "$$archive" ] && continue; \
+		echo "    $$BASENAME.a -> lib$${SONAME}.so"; \
+		ld.lld --shared -o "$(CURDIR)/$$SOFILE" \
+			--whole-archive "$(CURDIR)/$$archive" --no-whole-archive \
+			--no-undefined-version -soname "lib$${SONAME}.so" \
+			-L"$(CURDIR)/toolchain/sysroot/lib" -lc 2>/dev/null && \
+		strip "$$SOFILE" 2>/dev/null || true; \
+	done
+	@echo "  Shared libraries built:"
+	@ls -lh toolchain/sysroot/lib/*.so 2>/dev/null | awk '{print "    " $$NF " (" $$5 ")"}'
 	@echo ""
 	@echo "OXIDE toolchain built successfully!"
 	@echo ""
@@ -103,6 +154,54 @@ thread-test: toolchain
 	@echo "Building thread test program..."
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/thread-test userspace/tests/thread-test.c
 	@echo "Thread test built: $(USERSPACE_OUT_RELEASE)/thread-test"
+
+# — CrashBloom: mmap-write-test — unit tests for mmap demand paging
+mmap-write-test: toolchain
+	@echo "Building mmap write test..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/mmap-write-test userspace/tests/mmap-write-test.c
+	@echo "mmap write test built: $(USERSPACE_OUT_RELEASE)/mmap-write-test"
+
+# — ThreadRogue: ipc-suite — message queues + semaphores test suite
+ipc-suite: toolchain
+	@echo "Building IPC test suite..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/ipc-suite userspace/tests/ipc-suite.c
+	@echo "IPC test suite built: $(USERSPACE_OUT_RELEASE)/ipc-suite"
+
+# — ThreadRogue: shm-test — System V shared memory test
+shm-test: toolchain
+	@echo "Building shared memory test..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/shm-test userspace/tests/shm-test.c
+	@echo "Shared memory test built: $(USERSPACE_OUT_RELEASE)/shm-test"
+
+# — ThreadRogue: shm-fork-test — cross-process shared memory
+shm-fork-test: toolchain
+	@echo "Building cross-process SHM test..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/shm-fork-test userspace/tests/shm-fork-test.c
+	@echo "Cross-process SHM test built: $(USERSPACE_OUT_RELEASE)/shm-fork-test"
+
+# — CrashBloom: dynlink-suite — comprehensive dynamic linking test suite
+dynlink-suite: toolchain
+	@echo "Building dynamic linking test suite..."
+	@toolchain/bin/oxide-cc -dynamic -o $(USERSPACE_OUT_RELEASE)/dynlink-suite userspace/tests/dynlink-suite.c -lncursesw -lreadline
+	@echo "Dynamic linking test suite built: $(USERSPACE_OUT_RELEASE)/dynlink-suite"
+
+# — CrashBloom: dynlink-ncurses-test — multi-library dynamic linking (libc + ncurses)
+dynlink-ncurses-test: toolchain
+	@echo "Building ncurses dynamic linking test..."
+	@toolchain/bin/oxide-cc -dynamic -o $(USERSPACE_OUT_RELEASE)/dynlink-ncurses-test userspace/tests/dynlink-ncurses-test.c -lncursesw
+	@echo "Ncurses dynamic test built: $(USERSPACE_OUT_RELEASE)/dynlink-ncurses-test"
+
+# — CrashBloom: dynlink-test — C program dynamically linked against libc.so
+dynlink-test: toolchain
+	@echo "Building dynamic linking C test..."
+	@toolchain/bin/oxide-cc -dynamic -o $(USERSPACE_OUT_RELEASE)/dynlink-test userspace/tests/dynlink-test.c
+	@echo "Dynamic C test built: $(USERSPACE_OUT_RELEASE)/dynlink-test"
+
+# — CrashBloom: dynamic linking test — binary with PT_INTERP pointing to ld-oxide.so.1
+dyntest:
+	@echo "Building dynamic linking test..."
+	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace-dynamic.ld -C link-arg=-e_start" cargo build --package dyntest --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo "Dynamic test built: $(USERSPACE_OUT_RELEASE)/dyntest"
 
 # — Hexline: Sysroot staleness gate. If libc source changed, rebuild the sysroot.
 # This is the firewall between "libc got new syscall numbers" and
@@ -251,6 +350,74 @@ pkgmgr-python: toolchain pkgmgr-sysroot-deps
 		else \
 			echo "  ERROR: python stdlib not found after build"; \
 			exit 1; \
+		fi; \
+	fi
+
+# — Hexline: Self-hosting toolchain. GCC + binutils + make = compile C on OXIDE.
+# This is the endgame. Build these, install them on the rootfs, and OXIDE
+# can compile itself. 45 minutes of CPU time for immortality. — Hexline
+
+pkgmgr-make: toolchain
+	@mkdir -p $(PKGMGR_STAGING)/bin
+	@if [ -f "$(PKGMGR_STAGING)/bin/make" ]; then \
+		echo "  make already staged, skipping..."; \
+	else \
+		echo "  Building GNU make via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm make 2>&1 | tail -5; \
+		if [ -f "pkgmgr/build/make/install/usr/bin/make" ]; then \
+			cp pkgmgr/build/make/install/usr/bin/make $(PKGMGR_STAGING)/bin/make; \
+			echo "  make staged: $(PKGMGR_STAGING)/bin/make"; \
+		elif [ -f "pkgmgr/build/make/install/usr/local/bin/make" ]; then \
+			cp pkgmgr/build/make/install/usr/local/bin/make $(PKGMGR_STAGING)/bin/make; \
+			echo "  make staged: $(PKGMGR_STAGING)/bin/make"; \
+		else \
+			echo "  ERROR: make binary not found after build"; \
+			exit 1; \
+		fi; \
+	fi
+
+pkgmgr-binutils: toolchain
+	@mkdir -p $(PKGMGR_STAGING)/bin
+	@if [ -f "$(PKGMGR_STAGING)/bin/as" ]; then \
+		echo "  binutils already staged, skipping..."; \
+	else \
+		echo "  Building binutils via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm binutils 2>&1 | tail -10; \
+		for tool in as ld ar nm ranlib objdump objcopy strip readelf size strings; do \
+			SRC=$$(find pkgmgr/build/binutils/install -name "$$tool" -o -name "x86_64-oxide-elf-$$tool" 2>/dev/null | head -1); \
+			if [ -n "$$SRC" ]; then \
+				cp "$$SRC" "$(PKGMGR_STAGING)/bin/$$tool"; \
+			fi; \
+		done; \
+		echo "  binutils staged to $(PKGMGR_STAGING)/bin/"; \
+	fi
+
+pkgmgr-gcc: toolchain pkgmgr-binutils
+	@mkdir -p $(PKGMGR_STAGING)/bin $(PKGMGR_STAGING)/lib
+	@if [ -f "$(PKGMGR_STAGING)/bin/gcc" ]; then \
+		echo "  gcc already staged, skipping..."; \
+	else \
+		echo "  Building GCC via oxdnf (this takes 30-60 minutes)..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm gcc 2>&1 | tail -10; \
+		GCC_BIN=$$(find pkgmgr/build/gcc/install -name 'gcc' -type f 2>/dev/null | head -1); \
+		CC1_BIN=$$(find pkgmgr/build/gcc/install -name 'cc1' -type f 2>/dev/null | head -1); \
+		LIBGCC=$$(find pkgmgr/build/gcc/install -name 'libgcc.a' -type f 2>/dev/null | head -1); \
+		if [ -n "$$GCC_BIN" ]; then \
+			cp "$$GCC_BIN" "$(PKGMGR_STAGING)/bin/gcc"; \
+			ln -sf gcc "$(PKGMGR_STAGING)/bin/cc"; \
+			echo "  gcc staged: $(PKGMGR_STAGING)/bin/gcc"; \
+		else \
+			echo "  ERROR: gcc binary not found after build"; \
+			exit 1; \
+		fi; \
+		if [ -n "$$CC1_BIN" ]; then \
+			mkdir -p "$(PKGMGR_STAGING)/libexec/gcc"; \
+			cp "$$CC1_BIN" "$(PKGMGR_STAGING)/libexec/gcc/cc1"; \
+			echo "  cc1 staged: $(PKGMGR_STAGING)/libexec/gcc/cc1"; \
+		fi; \
+		if [ -n "$$LIBGCC" ]; then \
+			cp "$$LIBGCC" "$(PKGMGR_STAGING)/lib/libgcc.a"; \
+			echo "  libgcc.a staged: $(PKGMGR_STAGING)/lib/libgcc.a"; \
 		fi; \
 	fi
 

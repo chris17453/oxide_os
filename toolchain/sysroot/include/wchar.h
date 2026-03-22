@@ -5,6 +5,13 @@
 
 #include <stddef.h>
 #include <stdarg.h>
+
+/* Forward-declare FILE to break circular dependency with stdio.h */
+#ifndef __FILE_defined
+#define __FILE_defined
+typedef struct _FILE FILE;
+#endif
+
 #include <stdio.h>
 
 typedef int wint_t;

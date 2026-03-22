@@ -283,7 +283,7 @@ async function startQemu(options = {}) {
     qemuProcess = spawn(qemu, args, {
       cwd: PROJECT_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, TMPDIR: "/tmp/qemu-oxide", GDK_BACKEND: "x11" },
+      env: { ...process.env, TMPDIR: "/tmp/qemu-oxide", GDK_BACKEND: "x11", GDK_SCALE: "2" },
     });
 
     // Save PID

@@ -685,12 +685,19 @@ pub fn sys_preadv(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
     let mut cur_offset = offset;
 
     for i in 0..iovcnt as usize {
+        // — TorqueJax: IoVec from user iovec array — misaligned pointer =
+        // alignment panic. Byte-copy is the only civilized option.
         let iov: IoVec = unsafe {
             os_core::user_access_begin();
-            let ptr = (iov_ptr as *const IoVec).add(i);
-            let val = core::ptr::read_volatile(ptr);
+            let src = (iov_ptr as usize + i * core::mem::size_of::<IoVec>()) as *const u8;
+            let mut val = core::mem::MaybeUninit::<IoVec>::uninit();
+            core::ptr::copy_nonoverlapping(
+                src,
+                val.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<IoVec>(),
+            );
             os_core::user_access_end();
-            val
+            val.assume_init()
         };
 
         if iov.iov_len == 0 {
@@ -730,12 +737,19 @@ pub fn sys_pwritev(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
     let mut cur_offset = offset;
 
     for i in 0..iovcnt as usize {
+        // — TorqueJax: pwritev IoVec read — same alignment-safe byte copy.
+        // User iovec arrays don't owe us alignment, and we don't owe them a panic.
         let iov: IoVec = unsafe {
             os_core::user_access_begin();
-            let ptr = (iov_ptr as *const IoVec).add(i);
-            let val = core::ptr::read_volatile(ptr);
+            let src = (iov_ptr as usize + i * core::mem::size_of::<IoVec>()) as *const u8;
+            let mut val = core::mem::MaybeUninit::<IoVec>::uninit();
+            core::ptr::copy_nonoverlapping(
+                src,
+                val.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<IoVec>(),
+            );
             os_core::user_access_end();
-            val
+            val.assume_init()
         };
 
         if iov.iov_len == 0 {
@@ -876,11 +890,18 @@ pub fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event_ptr: u64) -> i64 {
         if !validate_user_buffer(event_ptr, 12) {
             return errno::EFAULT;
         }
+        // — SableWire: EpollEvent from user pointer — alignment is never a given.
+        // copy_nonoverlapping reads the struct without alignment assumptions.
         unsafe {
             os_core::user_access_begin();
-            let ev = core::ptr::read_volatile(event_ptr as *const vfs::epoll::EpollEvent);
+            let mut ev = core::mem::MaybeUninit::<vfs::epoll::EpollEvent>::uninit();
+            core::ptr::copy_nonoverlapping(
+                event_ptr as *const u8,
+                ev.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<vfs::epoll::EpollEvent>(),
+            );
             os_core::user_access_end();
-            Some(ev)
+            Some(ev.assume_init())
         }
     } else {
         None
@@ -959,18 +980,24 @@ pub fn sys_epoll_wait(epfd: i32, events_ptr: u64, maxevents: i32, _timeout: i32)
             None => return Err(errno::EINVAL),
         };
 
-        let instance = epoll_node.instance.lock();
+        let mut instance = epoll_node.instance.lock();
         Ok(instance.wait(max))
     });
 
     match result {
         Some(Ok(events)) => {
             let count = events.len();
+            // — SableWire: Writing epoll events to user buffer — alignment is
+            // a suggestion that userspace routinely ignores. Byte-copy or die.
             unsafe {
                 os_core::user_access_begin();
-                let out = events_ptr as *mut vfs::epoll::EpollEvent;
                 for (i, ev) in events.iter().enumerate() {
-                    core::ptr::write_volatile(out.add(i), *ev);
+                    let dest = (events_ptr as usize + i * core::mem::size_of::<vfs::epoll::EpollEvent>()) as *mut u8;
+                    core::ptr::copy_nonoverlapping(
+                        ev as *const vfs::epoll::EpollEvent as *const u8,
+                        dest,
+                        core::mem::size_of::<vfs::epoll::EpollEvent>(),
+                    );
                 }
                 os_core::user_access_end();
             }
@@ -1183,8 +1210,14 @@ pub fn sys_statx(
         _spare2: [0; 14],
     };
 
+    // — SableWire: Statx to user buffer — alignment-safe byte copy.
+    // User pointers are born misaligned and raised feral.
     unsafe {
-        core::ptr::write_volatile(statxbuf as *mut Statx, statx);
+        core::ptr::copy_nonoverlapping(
+            &statx as *const Statx as *const u8,
+            statxbuf as *mut u8,
+            core::mem::size_of::<Statx>(),
+        );
         os_core::user_access_end();
     }
 
@@ -1214,9 +1247,17 @@ pub fn sys_openat2(dirfd: i32, path_ptr: u64, path_len: usize, how_ptr: u64, _si
         return errno::EFAULT;
     }
 
+    // — SableWire: OpenHow from user pointer — alignment-safe read.
+    // Misaligned read_volatile panics; copy_nonoverlapping just works.
     unsafe {
         os_core::user_access_begin();
-        let how = core::ptr::read_volatile(how_ptr as *const OpenHow);
+        let mut how = core::mem::MaybeUninit::<OpenHow>::uninit();
+        core::ptr::copy_nonoverlapping(
+            how_ptr as *const u8,
+            how.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<OpenHow>(),
+        );
+        let how = how.assume_init();
         os_core::user_access_end();
 
         // For now, ignore resolve flags and use regular open

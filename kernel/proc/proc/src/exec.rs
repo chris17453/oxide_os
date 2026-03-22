@@ -1,13 +1,18 @@
 //! Exec implementation
 //!
 //! Implements the exec() system call, replacing the current process image
-//! with a new executable.
+//! with a new executable. Now uses arch-traits for address space layout,
+//! TLS layout, and process context creation — no more hardcoded x86_64 constants.
+//!
+//! — BlackLatch: the function that ends one life and begins another. Every
+//! userspace process passes through here at least once. Get it wrong and
+//! nothing runs. Get it really wrong and the kernel dies too.
 
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use elf::{ElfExecutable, ElfLoader};
+use elf::{AuxEntry, AuxType, ElfExecutable, ElfLoader, Elf64ProgramHeader};
 use mm_paging::phys_to_virt;
 use mm_traits::FrameAllocator;
 use os_core::{PhysAddr, VirtAddr};
@@ -31,6 +36,10 @@ pub enum ExecError {
     InvalidAddress,
     /// Invalid argument
     InvalidArgument,
+    /// Interpreter not found on filesystem
+    InterpreterNotFound,
+    /// Interpreter ELF is invalid
+    InvalidInterpreter,
 }
 
 /// Result of a successful exec operation
@@ -60,13 +69,6 @@ pub struct ExecResult {
 /// User stack size (1MB)
 const USER_STACK_SIZE: usize = 1024 * 1024;
 
-/// User stack top address (just below kernel space) — canonical upper limit.
-///
-/// — ColdCipher: This is the ceiling, not the law. ASLR slides the actual top
-/// downward by up to ASLR_STACK_ENTROPY bytes so every exec lands somewhere
-/// different. Predictable stacks are attacker gift wrap.
-const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
-
 /// Maximum random downward shift for the user stack top.
 ///
 /// — ColdCipher: 4MB window, page-aligned mask. 1023 pages of entropy.
@@ -74,17 +76,98 @@ const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 /// Nobody wins by guessing 1-in-1024. — ColdCipher
 const ASLR_STACK_ENTROPY: u64 = 0x3F_F000; // 4MB - 4KB, page-aligned mask
 
-/// Default mmap base address (before ASLR jitter).
-///
-/// — ColdCipher: Kept in sync with meta::MMAP_BASE_DEFAULT.
-/// exec() generates a fresh offset and writes it back into ProcessMeta.
-const MMAP_BASE_DEFAULT: u64 = 0x0000_7000_0000_0000;
-
 /// Maximum random downward shift for the mmap base on exec.
 ///
 /// — ColdCipher: 4MB page-aligned mask — same window as the stack entropy.
 /// Combined with stack ASLR, the cost to brute-force the full layout doubles.
 const ASLR_MMAP_ENTROPY: u64 = 0x3FF_F000; // 4MB - 4KB, page-aligned mask
+
+/// Address space layout constants — pulled from arch traits at compile time.
+/// — BlackLatch: no more hardcoded 0x7FFF_FFFF_0000. The arch layer decides
+/// where things go, exec just uses the values.
+mod layout {
+    use arch_traits::ExecConfig;
+
+    // — BlackLatch: type alias to avoid repeating the cfg dance everywhere
+    #[cfg(feature = "arch-x86_64")]
+    type A = arch_x86_64::X86_64;
+
+    pub const USER_STACK_TOP: u64 = A::USER_STACK_TOP;
+    pub const MMAP_BASE_DEFAULT: u64 = A::MMAP_BASE_DEFAULT;
+    pub const TLS_BASE: u64 = A::TLS_BASE;
+    pub const USER_ADDR_LIMIT: u64 = A::USER_ADDR_LIMIT;
+    pub const ELF_MACHINE: u16 = A::ELF_MACHINE_EXEC;
+}
+
+/// TLS layout helpers — pulled from arch traits.
+mod tls_arch {
+    use arch_traits::TlsLayout;
+
+    #[cfg(feature = "arch-x86_64")]
+    type A = arch_x86_64::X86_64;
+
+    pub const TCB_SIZE: usize = A::TCB_SIZE;
+
+    #[inline]
+    pub fn thread_pointer(alloc_base: u64, mem_size: usize) -> u64 {
+        A::thread_pointer(alloc_base, mem_size)
+    }
+
+    #[inline]
+    pub fn tls_data_offset() -> usize {
+        A::tls_data_offset()
+    }
+}
+
+/// Process context creation — dispatches through arch-traits ProcessContextOps.
+/// — SableWire: the arch crate knows the right rflags/cs/ss values for user mode.
+/// We call through the trait, which returns X86_64ProcessContext (or AArch64Context, etc),
+/// then convert to proc's ProcessContext. No x86_64 constants in the proc crate.
+fn new_user_context(entry: u64, sp: u64, tls_base: u64) -> ProcessContext {
+    #[cfg(feature = "arch-x86_64")]
+    {
+        use arch_traits::ProcessContextOps;
+        let arch_ctx = arch_x86_64::X86_64::new_user_context(entry, sp, tls_base);
+        // — SableWire: map arch-specific context to proc's ProcessContext.
+        // The field names match because ProcessContext was designed for x86_64.
+        // When adding AArch64, ProcessContext needs to become generic or use
+        // the arch trait's associated type directly.
+        ProcessContext {
+            rip: arch_ctx.rip,
+            rsp: arch_ctx.rsp,
+            rflags: arch_ctx.rflags,
+            rax: arch_ctx.rax,
+            rbx: arch_ctx.rbx,
+            rcx: arch_ctx.rcx,
+            rdx: arch_ctx.rdx,
+            rsi: arch_ctx.rsi,
+            rdi: arch_ctx.rdi,
+            rbp: arch_ctx.rbp,
+            r8: arch_ctx.r8,
+            r9: arch_ctx.r9,
+            r10: arch_ctx.r10,
+            r11: arch_ctx.r11,
+            r12: arch_ctx.r12,
+            r13: arch_ctx.r13,
+            r14: arch_ctx.r14,
+            r15: arch_ctx.r15,
+            cs: arch_ctx.cs,
+            ss: arch_ctx.ss,
+            fs_base: arch_ctx.fs_base,
+            gs_base: arch_ctx.gs_base,
+        }
+    }
+    #[cfg(not(feature = "arch-x86_64"))]
+    {
+        // — SableWire: other arches will implement their own mapping.
+        // For now, default context with entry/sp/tls set.
+        let mut ctx = ProcessContext::default();
+        ctx.rip = entry;
+        ctx.rsp = sp;
+        ctx.fs_base = tls_base;
+        ctx
+    }
+}
 
 /// Execute a new program
 ///
@@ -92,21 +175,29 @@ const ASLR_MMAP_ENTROPY: u64 = 0x3FF_F000; // 4MB - 4KB, page-aligned mask
 /// Returns ExecResult with all data needed to update the process.
 /// The caller is responsible for updating Task and ProcessMeta.
 ///
+/// — BlackLatch: now supports dynamically-linked executables via PT_INTERP.
+/// If the ELF has a PT_INTERP segment, exec loads both the main binary AND
+/// the interpreter, sets up an auxiliary vector on the stack, and jumps to
+/// the interpreter's entry point instead of the main binary's.
+///
 /// # Arguments
 /// * `elf_data` - ELF binary data
 /// * `argv` - Command-line arguments
 /// * `envp` - Environment variables
 /// * `allocator` - Frame allocator for memory allocation
 /// * `kernel_pml4` - Kernel PML4 for copying kernel mappings
+/// * `interp_data` - Optional interpreter ELF data (read by caller from VFS via PT_INTERP path)
 pub fn do_exec<A: FrameAllocator>(
     elf_data: &[u8],
     argv: &[String],
     envp: &[String],
     allocator: &A,
     kernel_pml4: PhysAddr,
+    interp_data: Option<&[u8]>,
 ) -> Result<ExecResult, ExecError> {
-    // Parse ELF
-    let elf = ElfExecutable::parse(elf_data).map_err(|_e| ExecError::InvalidElf)?;
+    // Parse ELF with arch-provided constants
+    let elf = ElfExecutable::parse_with_arch(elf_data, layout::ELF_MACHINE, layout::USER_ADDR_LIMIT)
+        .map_err(|_e| ExecError::InvalidElf)?;
 
     // TEMP DEBUG: Manually check for PT_TLS in raw ELF data
     #[cfg(debug_assertions)]
@@ -285,12 +376,12 @@ pub fn do_exec<A: FrameAllocator>(
     }
 
     // Set up TLS (Thread-Local Storage) if needed
-    // -- Hexline: ELF parser handles PT_TLS correctly now. Manual fallback retained
+    // — Hexline: ELF parser handles PT_TLS correctly now. Manual fallback retained
     // for safety until we've validated across all userspace binaries.
     let parser_tls = elf.tls_template();
 
     // Fallback: manual PT_TLS scan if parser missed it
-    // -- Hexline: This catches edge cases where the parser's segment array fills up
+    // — Hexline: This catches edge cases where the parser's segment array fills up
     let manual_tls = if parser_tls.is_none() {
         #[repr(C)]
         struct ElfHeader {
@@ -351,7 +442,7 @@ pub fn do_exec<A: FrameAllocator>(
         None
     };
 
-    // -- Hexline: Parser-first, manual-fallback. Log when fallback catches something.
+    // — Hexline: Parser-first, manual-fallback. Log when fallback catches something.
     #[cfg(debug_assertions)]
     if parser_tls.is_none() && manual_tls.is_some() {
         extern crate os_log;
@@ -360,20 +451,16 @@ pub fn do_exec<A: FrameAllocator>(
 
     let tls_template_to_use = parser_tls.or(manual_tls.as_ref());
     let tls_base = if let Some(tls_template) = tls_template_to_use {
-        // Allocate TLS block
-        // TLS block layout: [TLS data] [Thread Control Block (TCB)]
-        // FS register points to TCB (end of TLS block)
+        // — GraveShift: TLS setup now uses arch-traits for layout calculations.
+        // No more hardcoded Variant II assumptions — the arch layer decides
+        // where the thread pointer goes relative to the data.
         let tls_size = tls_template.mem_size;
-        let tcb_size = 64; // Thread Control Block size (self-pointer + space)
-        let total_size = tls_size + tcb_size;
+        let total_size = tls_arch::TCB_SIZE + tls_size;
 
         // Align to page boundary
         let pages_needed = (total_size + 4095) / 4096;
-        // — ColdCipher: TLS lives BELOW the mmap region (0x7000_0000_0000) so they
-        // can't collide. mmap grows downward from its base; TLS is a fixed allocation
-        // at a distinct address. The old value (0x7000_0000_0000) was exactly
-        // MMAP_BASE_DEFAULT — the first mmap(NULL) would stomp right on the TCB.
-        let tls_vaddr = VirtAddr::new(0x0000_6FFF_F000_0000); // TLS region — below mmap base
+        // — ColdCipher: TLS lives BELOW the mmap region so they can't collide.
+        let tls_vaddr = VirtAddr::new(layout::TLS_BASE);
 
         // Allocate TLS pages
         new_address_space
@@ -387,26 +474,19 @@ pub fn do_exec<A: FrameAllocator>(
             )
             .map_err(|_| ExecError::OutOfMemory)?;
 
-        // — GraveShift: x86-64 TLS ABI Variant II layout:
-        //   [TLS init data (file_size)] [BSS zeros (mem_size - file_size)] [TCB (8 bytes)]
-        //   ^                                                               ^
-        //   tls_vaddr                                                       tcb_addr = FS base
-        //
-        // Compiler generates NEGATIVE offsets from FS base: `%fs:0` reads the
-        // self-pointer (TCB), then `lea -offset(%rax)` reaches TLS data BELOW.
-        // The old layout had TCB at the START with TLS data after — every TLS
-        // access read from below the allocation into unmapped memory. Oops.
+        // — GraveShift: Calculate thread pointer using arch trait.
+        // x86_64 Variant II: TP = alloc_base + mem_size (points to TCB after data)
+        // AArch64 Variant I: TP = alloc_base (points to TCB before data)
+        let tp = tls_arch::thread_pointer(tls_vaddr.as_u64(), tls_size);
 
-        // TCB sits right after the TLS block
-        let tcb_addr = tls_vaddr.as_u64() + tls_size as u64;
+        // Write self-pointer to TCB (required by TLS ABI — TP:0 = tp)
+        write_to_user_stack(&new_address_space, tp, &tp.to_le_bytes())?;
 
-        // Write self-pointer to TCB (required by x86-64 TLS ABI — %fs:0 = tp)
-        write_to_user_stack(&new_address_space, tcb_addr, &tcb_addr.to_le_bytes())?;
-
-        // Copy TLS initialization data to the START of the block (before TCB)
+        // Copy TLS initialization data using arch-specific offset
+        let data_dest = tls_vaddr.as_u64() + tls_arch::tls_data_offset() as u64;
         let tls_data = elf.tls_data();
         if !tls_data.is_empty() {
-            write_to_user_stack(&new_address_space, tls_vaddr.as_u64(), tls_data)?;
+            write_to_user_stack(&new_address_space, data_dest, tls_data)?;
         }
         // BSS portion (mem_size - file_size) is already zero from page allocation
 
@@ -420,22 +500,18 @@ pub fn do_exec<A: FrameAllocator>(
             b"[tls]",
         ));
 
-        Some(tcb_addr)
+        Some(tp)
     } else {
         None
     };
 
     // — ColdCipher: ASLR — randomize the stack top within a 4MB window.
-    // The canonical limit is USER_STACK_TOP. We shift down by a page-aligned
-    // random offset so every exec lands in a different spot. The 1MB allocation
-    // still fits; worst case the bottom is ~5MB below the canonical ceiling.
-    let stack_aslr_shift = crate::meta::aslr_random() & ASLR_STACK_ENTROPY; // page-aligned
-    let randomized_stack_top = USER_STACK_TOP - stack_aslr_shift;
+    let stack_aslr_shift = crate::meta::aslr_random() & ASLR_STACK_ENTROPY;
+    let randomized_stack_top = layout::USER_STACK_TOP - stack_aslr_shift;
 
-    // — ColdCipher: mmap base ASLR — fresh jitter per exec. The randomized base
-    // gets written into ProcessMeta::next_mmap_addr by the caller (process.rs).
-    let mmap_aslr_shift = crate::meta::aslr_random() & ASLR_MMAP_ENTROPY; // page-aligned
-    let randomized_mmap_base = MMAP_BASE_DEFAULT - mmap_aslr_shift;
+    // — ColdCipher: mmap base ASLR — fresh jitter per exec.
+    let mmap_aslr_shift = crate::meta::aslr_random() & ASLR_MMAP_ENTROPY;
+    let randomized_mmap_base = layout::MMAP_BASE_DEFAULT - mmap_aslr_shift;
 
     // Set up user stack
     let stack_pages = USER_STACK_SIZE / 4096;
@@ -452,44 +528,173 @@ pub fn do_exec<A: FrameAllocator>(
         )
         .map_err(|_| ExecError::OutOfMemory)?;
 
-    // — NeonRoot: Register the user stack VMA. GROWSDOWN tells the fault handler
-    // this region can expand downward on demand (dynamic stack growth).
-    // — SableWire: VMA end must be USER_STACK_TOP, not randomized_stack_top.
-    // ASLR shifts where RSP starts, but the C runtime (musl _start, memset init)
-    // writes to addresses above RSP during startup — zeroing BSS, initializing
-    // the stack guard, etc. If the VMA only covers [bottom, randomized_top),
-    // those writes hit addresses with no VMA, the fault handler can't classify
-    // them, and we get infinite page fault loops. The full [bottom, USER_STACK_TOP)
-    // range is the process's stack territory. — SableWire
+    // — NeonRoot: Register the user stack VMA.
     let _ = new_address_space.add_vma(VmArea::new_named(
         stack_bottom.as_u64(),
-        USER_STACK_TOP,
+        layout::USER_STACK_TOP,
         VmFlags::READ | VmFlags::WRITE | VmFlags::GROWSDOWN | VmFlags::STACK,
         VmType::Stack,
         b"[stack]",
     ));
 
     // — VeilAudit: Never transfer control to an address outside executable PT_LOAD
-    // mappings. Corrupted/partial ELF reads can produce garbage e_entry values
-    // (e.g., low unmapped addresses) that otherwise explode as immediate user
-    // instruction-fetch faults.
+    // mappings. Corrupted/partial ELF reads can produce garbage e_entry values.
     if !entry_in_exec_segment {
         return Err(ExecError::InvalidElf);
     }
 
-    // Set up argv and envp on the stack
+    // =========================================================================
+    // PT_INTERP handling — dynamic linking support
+    // — BlackLatch: if the ELF has a PT_INTERP segment AND the caller provided
+    // interpreter data, load the interpreter into the address space above the
+    // mmap base. The interpreter's entry point becomes the actual entry —
+    // it reads AT_ENTRY from the aux vector to find the main executable later.
+    // =========================================================================
+    let has_interp = elf.interp().is_some();
+    let mut interp_base: u64 = 0;
+    let mut interp_entry: u64 = 0;
+
+    if has_interp {
+        if let Some(idata) = interp_data {
+            // — BlackLatch: load the interpreter ELF into the address space.
+            // The interpreter is loaded at its LINKED address (from its own LOAD
+            // segments). It's built with a non-conflicting base address (e.g., 0x200000)
+            // so it doesn't overlap with the main executable at 0x400000.
+            // This avoids the need for self-relocation in the interpreter.
+            let interp_elf = ElfExecutable::parse_with_arch(
+                idata,
+                layout::ELF_MACHINE,
+                layout::USER_ADDR_LIMIT,
+            ).map_err(|_| ExecError::InvalidInterpreter)?;
+
+            // — BlackLatch: for PIE interpreters (ET_DYN, min_vaddr near 0), pick a
+            // load address above the main executable. For ET_EXEC interpreters
+            // (linked at a fixed address like 0x200000), load at their linked address.
+            let interp_min_vaddr = interp_elf.min_vaddr();
+            let base_offset: u64 = if interp_elf.is_pie() || interp_min_vaddr < 0x10000 {
+                // — BlackLatch: PIE interpreter — load at 0x200000 (above NULL page, below exe)
+                0x200000 - interp_min_vaddr
+            } else {
+                // — BlackLatch: fixed-address interpreter — load at linked address
+                0
+            };
+
+            for segment in interp_elf.segments() {
+                let adjusted_vaddr = segment.vaddr.as_u64() + base_offset;
+                let adjusted_seg = elf::LoadSegment {
+                    vaddr: VirtAddr::new(adjusted_vaddr),
+                    mem_size: segment.mem_size,
+                    file_offset: segment.file_offset,
+                    file_size: segment.file_size,
+                    flags: segment.flags,
+                };
+
+                let (page_start, total_size) = ElfLoader::segment_pages(&adjusted_seg);
+                let page_offset = ElfLoader::segment_page_offset(&adjusted_seg);
+                let num_pages = total_size / 4096;
+                let seg_data = interp_elf.segment_data(segment);
+
+                for i in 0..num_pages {
+                    let page_virt = VirtAddr::new(page_start.as_u64() + (i as u64 * 4096));
+
+                    let frame_virt = if let Some(existing_phys) = new_address_space.translate(page_virt) {
+                        new_address_space.update_user_page_flags(page_virt, segment.flags);
+                        phys_to_virt(existing_phys)
+                    } else {
+                        let frame = allocator.alloc_frame().ok_or(ExecError::OutOfMemory)?;
+                        let frame_virt = phys_to_virt(frame);
+                        unsafe { core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096); }
+                        if let Err(_) = unsafe {
+                            new_address_space.map_user_page(page_virt, frame, segment.flags, allocator)
+                        } {
+                            allocator.free_frame(frame);
+                            return Err(ExecError::OutOfMemory);
+                        }
+                        frame_virt
+                    };
+
+                    // Copy data from interpreter segment
+                    let page_start_in_segment = i * 4096;
+                    let data_start_in_page = if i == 0 { page_offset } else { 0 };
+
+                    if page_start_in_segment < segment.file_size + page_offset {
+                        let seg_data_start = if page_start_in_segment > page_offset {
+                            page_start_in_segment - page_offset
+                        } else {
+                            0
+                        };
+                        let copy_len = core::cmp::min(
+                            4096 - data_start_in_page,
+                            segment.file_size.saturating_sub(seg_data_start),
+                        );
+                        if copy_len > 0 && seg_data_start < seg_data.len() {
+                            let src_end = core::cmp::min(seg_data_start + copy_len, seg_data.len());
+                            let actual_len = src_end - seg_data_start;
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    seg_data[seg_data_start..].as_ptr(),
+                                    frame_virt.as_mut_ptr::<u8>().add(data_start_in_page),
+                                    actual_len,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // — NeonRoot: register VMA for interpreter segment
+                let seg_end = page_start.as_u64() + total_size as u64;
+                let vm_flags = mem_flags_to_vm(segment.flags);
+                let _ = new_address_space.add_vma(VmArea::new_named(
+                    page_start.as_u64(),
+                    seg_end,
+                    vm_flags,
+                    VmType::Text,
+                    b"[interp]",
+                ));
+            }
+
+            interp_base = interp_elf.min_vaddr();
+            // — BlackLatch: interpreter entry point (no relocation needed)
+            interp_entry = interp_elf.entry_point().as_u64() + base_offset;
+
+            #[cfg(debug_assertions)]
+            {
+                extern crate os_log;
+                unsafe {
+                    os_log::write_str_raw("[EXEC] Loaded interpreter at ");
+                    os_log::write_u64_hex_raw(interp_base);
+                    os_log::write_str_raw(", entry=");
+                    os_log::write_u64_hex_raw(interp_entry);
+                    os_log::write_str_raw("\n");
+                }
+            }
+        }
+        // — BlackLatch: if has_interp but no interp_data, caller didn't provide
+        // the interpreter. This is NOT an error for backward compat — static
+        // binaries that somehow have a stale PT_INTERP will just run directly.
+    }
+
+    // — BlackLatch: if interpreter was loaded, jump to it. Otherwise, main exe.
+    let actual_entry = if interp_entry != 0 {
+        interp_entry
+    } else {
+        entry_point.as_u64()
+    };
+
+    // Set up argv and envp on the stack, with optional auxiliary vector
     // Stack layout (growing down):
-    // [strings data] <- null-terminated strings
-    // [padding for alignment]
-    // [NULL]         <- envp terminator
-    // [envp[n-1]]    <- pointers to env strings
+    // [random bytes (16)]  <- AT_RANDOM points here
+    // [AT_NULL entry]      <- aux vector terminator
+    // [aux entries...]     <- auxiliary vector (only if PT_INTERP present)
+    // [NULL]               <- envp terminator
+    // [envp[n-1]]          <- pointers to env strings
     // ...
     // [envp[0]]
-    // [NULL]         <- argv terminator
-    // [argv[n-1]]    <- pointers to arg strings
+    // [NULL]               <- argv terminator
+    // [argv[n-1]]          <- pointers to arg strings
     // ...
     // [argv[0]]
-    // [argc]         <- number of arguments
+    // [argc]               <- number of arguments
     // <- rsp points here
 
     let mut stack_ptr = randomized_stack_top;
@@ -523,12 +728,69 @@ pub fn do_exec<A: FrameAllocator>(
         current_offset += (env.len() + 1) as u64;
     }
 
-    // Now calculate space for pointers
-    // envp array: (envp.len() + 1) * 8 bytes (including NULL terminator)
-    // argv array: (argv.len() + 1) * 8 bytes (including NULL terminator)
-    // argc: 8 bytes
+    // — WireSaint: Reserve space for random bytes (16 bytes for AT_RANDOM)
+    stack_ptr -= 16;
+    stack_ptr &= !0xF;
+    let random_bytes_addr = stack_ptr;
+
+    // Write 16 pseudo-random bytes for AT_RANDOM
+    // — ColdCipher: stack canary seed, ASLR entropy source. Not cryptographic
+    // but good enough to defeat non-adaptive attacks. Use TSC as entropy source.
+    let rand_seed = crate::meta::aslr_random();
+    let rand_bytes: [u8; 16] = {
+        let a = rand_seed.to_le_bytes();
+        let b = crate::meta::aslr_random().to_le_bytes();
+        let mut buf = [0u8; 16];
+        buf[..8].copy_from_slice(&a);
+        buf[8..].copy_from_slice(&b);
+        buf
+    };
+    write_to_user_stack(&new_address_space, random_bytes_addr, &rand_bytes)?;
+
+    // Build auxiliary vector entries
+    // — WireSaint: the aux vector tells the dynamic linker about the loaded binary.
+    // Even for static binaries, AT_PAGESZ and AT_RANDOM are useful (musl reads them).
+    let mut aux_entries: Vec<AuxEntry> = Vec::with_capacity(12);
+
+    // Always provide basic entries
+    aux_entries.push(AuxEntry::new(AuxType::AtPagesz, 4096));
+    aux_entries.push(AuxEntry::new(AuxType::AtRandom, random_bytes_addr));
+    aux_entries.push(AuxEntry::new(AuxType::AtEntry, entry_point.as_u64()));
+
+    // Add dynamic linking entries if PT_INTERP is present
+    if has_interp {
+        if let Some(phdr_info) = elf.phdr() {
+            aux_entries.push(AuxEntry::new(AuxType::AtPhdr, phdr_info.vaddr));
+            aux_entries.push(AuxEntry::new(AuxType::AtPhent, phdr_info.entry_size as u64));
+            aux_entries.push(AuxEntry::new(AuxType::AtPhnum, phdr_info.count as u64));
+        } else {
+            // — WireSaint: fallback — compute AT_PHDR from ELF header offset
+            let header = elf.header();
+            let phoff = header.e_phoff;
+            // Find the first LOAD segment that contains the phdr table
+            for seg in elf.segments() {
+                let seg_start = seg.vaddr.as_u64();
+                if phoff >= seg.file_offset as u64
+                    && phoff < (seg.file_offset + seg.file_size) as u64
+                {
+                    let phdr_vaddr = seg_start + (phoff - seg.file_offset as u64);
+                    aux_entries.push(AuxEntry::new(AuxType::AtPhdr, phdr_vaddr));
+                    break;
+                }
+            }
+            aux_entries.push(AuxEntry::new(AuxType::AtPhent, header.e_phentsize as u64));
+            aux_entries.push(AuxEntry::new(AuxType::AtPhnum, header.e_phnum as u64));
+        }
+        aux_entries.push(AuxEntry::new(AuxType::AtBase, interp_base));
+    }
+
+    // Null terminator
+    aux_entries.push(AuxEntry::null());
+
+    // Calculate space for pointers + aux vector
+    let aux_size = aux_entries.len() * 16; // Each AuxEntry is 16 bytes (u64 + u64)
     let pointers_size = ((envp.len() + 1) + (argv.len() + 1) + 1) * 8;
-    stack_ptr -= pointers_size as u64;
+    stack_ptr -= (pointers_size + aux_size) as u64;
     stack_ptr &= !0xF; // 16-byte align
 
     let final_rsp = VirtAddr::new(stack_ptr);
@@ -542,6 +804,7 @@ pub fn do_exec<A: FrameAllocator>(
         os_log::debug!("[EXEC]   strings_base = {:#x}", strings_base);
         os_log::debug!("[EXEC]   string_data_size = {}", string_data_size);
         os_log::debug!("[EXEC]   pointers_size = {}", pointers_size);
+        os_log::debug!("[EXEC]   aux_entries = {} ({} bytes)", aux_entries.len(), aux_size);
         os_log::debug!("[EXEC]   final_rsp = {:#x}", stack_ptr);
         os_log::debug!("[EXEC]   argc will be at {:#x}", stack_ptr);
         os_log::debug!("[EXEC]   argv[0] ptr will be at {:#x}", stack_ptr + 8);
@@ -556,6 +819,9 @@ pub fn do_exec<A: FrameAllocator>(
                     string_offsets_argv[1]
                 );
             }
+        }
+        if has_interp {
+            os_log::debug!("[EXEC]   PT_INTERP present — aux vector on stack");
         }
     }
 
@@ -619,41 +885,31 @@ pub fn do_exec<A: FrameAllocator>(
     }
     // NULL terminator for envp
     write_to_user_stack(&new_address_space, ptr, &0u64.to_le_bytes())?;
+    ptr += 8;
 
-    // Create context for fresh start
-    let mut context = ProcessContext::default();
-    context.rip = entry_point.as_u64();
-    context.rsp = final_rsp.as_u64();
-    context.rflags = 0x202; // IF set
-    context.cs = 0x23; // User code segment
-    context.ss = 0x1B; // User data segment
-    context.fs_base = tls_base.unwrap_or(0); // Set FS base for TLS
+    // — WireSaint: Write auxiliary vector entries after envp NULL terminator
+    for aux in &aux_entries {
+        write_to_user_stack(&new_address_space, ptr, &aux.a_type.to_le_bytes())?;
+        ptr += 8;
+        write_to_user_stack(&new_address_space, ptr, &aux.a_val.to_le_bytes())?;
+        ptr += 8;
+    }
 
-    // GraveShift: Program startup does NOT use registers for argc/argv/envp!
-    // Per System V ABI, when a program starts:
-    //   - RSP points to argc on the stack
-    //   - [RSP+0]  = argc
-    //   - [RSP+8]  = argv[0]
-    //   - [RSP+16] = argv[1]
-    //   - etc.
-    // Registers should be CLEAR (except RSP, RIP, RDX for rtld)
-    // Only FUNCTION CALLS use rdi/rsi/rdx for arguments!
-    context.rdi = 0; // Clear registers
-    context.rsi = 0;
-    context.rdx = 0; // Could be set to rtld_fini for dynamic linking (future)
+    // — SableWire: Create context using arch-aware helper. The arch layer knows
+    // the right rflags/cs/ss values for user mode on this architecture.
+    let context = new_user_context(
+        actual_entry,
+        final_rsp.as_u64(),
+        tls_base.unwrap_or(0),
+    );
 
-    // — BlackLatch: flush_tlb_all() only reloads CR3 on THIS core. If any CLONE_VM
-    // thread is running on another CPU it still has valid TLB entries pointing into
-    // the old address space. After exec we install a brand-new PML4, so those stale
-    // entries now map into freed frames. Shoot them all down before we hand control
-    // to the new image. tlb_shootdown(0, MAX, 0) drives a full CR3 reload on every
-    // CPU — cheap flat cost, not per-page, because invalidate_range promotes large
-    // ranges automatically.
+    // — BlackLatch: flush_tlb_all() only reloads CR3 on THIS core. Shoot down
+    // stale entries on all CPUs before handing control to the new image.
     smp::tlb_shootdown(0, u64::MAX, 0);
 
     Ok(ExecResult {
         address_space: new_address_space,
-        entry_point,
+        entry_point: VirtAddr::new(actual_entry),
         stack_pointer: final_rsp,
         context,
         cmdline: argv.iter().cloned().collect(),

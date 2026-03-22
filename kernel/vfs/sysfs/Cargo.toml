@@ -7,3 +7,5 @@ description = "System filesystem (sysfs) for OXIDE OS"
 
 [dependencies]
 vfs = { workspace = true }
+pci = { path = "../../drivers/pci" }
+os_core = { workspace = true }

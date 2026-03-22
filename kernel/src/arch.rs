@@ -390,6 +390,179 @@ pub fn smp_monotonic_freq() -> u64 {
 }
 
 // ============================================================================
+// Exec Configuration — address space layout and TLS constants
+// — BlackLatch: exec.rs calls these instead of hardcoding x86_64 addresses.
+// When we add AArch64, only the arch crate changes — exec stays identical.
+// ============================================================================
+
+/// User stack top address (before ASLR)
+#[inline]
+pub const fn user_stack_top() -> u64 {
+    use arch_traits::ExecConfig;
+    Arch::USER_STACK_TOP
+}
+
+/// Default mmap base address (before ASLR)
+#[inline]
+pub const fn mmap_base_default() -> u64 {
+    use arch_traits::ExecConfig;
+    Arch::MMAP_BASE_DEFAULT
+}
+
+/// TLS region base address
+#[inline]
+pub const fn tls_base() -> u64 {
+    use arch_traits::ExecConfig;
+    Arch::TLS_BASE
+}
+
+/// Upper limit for user-space addresses
+#[inline]
+pub const fn user_addr_limit() -> u64 {
+    use arch_traits::ExecConfig;
+    Arch::USER_ADDR_LIMIT
+}
+
+/// ELF e_machine value for executables on this architecture
+#[inline]
+pub const fn elf_machine_exec() -> u16 {
+    use arch_traits::ExecConfig;
+    Arch::ELF_MACHINE_EXEC
+}
+
+// ============================================================================
+// TLS Layout — architecture-specific TLS calculations
+// — GraveShift: exec.rs calls these to compute thread pointers and data offsets
+// without knowing whether we're Variant I or Variant II.
+// ============================================================================
+
+/// Calculate the thread pointer value for a TLS allocation
+#[inline]
+pub fn tls_thread_pointer(alloc_base: u64, mem_size: usize) -> u64 {
+    use arch_traits::TlsLayout;
+    Arch::thread_pointer(alloc_base, mem_size)
+}
+
+/// Get the offset from alloc base where TLS init data should be copied
+#[inline]
+pub fn tls_data_offset() -> usize {
+    use arch_traits::TlsLayout;
+    Arch::tls_data_offset()
+}
+
+/// Get the TCB self-pointer offset
+#[inline]
+pub fn tls_tcb_self_pointer_offset() -> usize {
+    use arch_traits::TlsLayout;
+    Arch::tcb_self_pointer_offset()
+}
+
+/// Get the TCB size for this architecture
+#[inline]
+pub fn tls_tcb_size() -> usize {
+    use arch_traits::TlsLayout;
+    Arch::TCB_SIZE
+}
+
+/// Get total allocation size for a TLS block
+#[inline]
+pub fn tls_total_alloc_size(mem_size: usize) -> usize {
+    use arch_traits::TlsLayout;
+    Arch::total_alloc_size(mem_size)
+}
+
+// ============================================================================
+// Process Context — arch-agnostic context creation for exec
+// — SableWire: create fresh user contexts without knowing about rflags or cs/ss.
+// ============================================================================
+
+/// Re-export the architecture's process context type
+pub type ArchProcessContext = <Arch as arch_traits::ProcessContextOps>::Context;
+
+/// Create a fresh user-mode process context for exec
+#[inline]
+pub fn new_user_context(entry: u64, sp: u64, tls_base: u64) -> ArchProcessContext {
+    use arch_traits::ProcessContextOps;
+    Arch::new_user_context(entry, sp, tls_base)
+}
+
+/// Get instruction pointer from context
+#[inline]
+pub fn context_get_ip(ctx: &ArchProcessContext) -> u64 {
+    use arch_traits::ProcessContextOps;
+    Arch::get_ip(ctx)
+}
+
+/// Set instruction pointer in context
+#[inline]
+pub fn context_set_ip(ctx: &mut ArchProcessContext, ip: u64) {
+    use arch_traits::ProcessContextOps;
+    Arch::set_ip(ctx, ip);
+}
+
+/// Get stack pointer from context
+#[inline]
+pub fn context_get_sp(ctx: &ArchProcessContext) -> u64 {
+    use arch_traits::ProcessContextOps;
+    Arch::get_sp(ctx)
+}
+
+/// Set stack pointer in context
+#[inline]
+pub fn context_set_sp(ctx: &mut ArchProcessContext, sp: u64) {
+    use arch_traits::ProcessContextOps;
+    Arch::set_sp(ctx, sp);
+}
+
+/// Set TLS base in context
+#[inline]
+pub fn context_set_tls_base(ctx: &mut ArchProcessContext, tls: u64) {
+    use arch_traits::ProcessContextOps;
+    Arch::set_tls_base(ctx, tls);
+}
+
+// ============================================================================
+// ELF Relocation — architecture-dispatched relocation application
+// — WireSaint: dl crate and module loader call this instead of matching on
+// arch-specific relocation type numbers directly.
+// ============================================================================
+
+/// Apply an ELF relocation using the current architecture's rules
+#[inline]
+pub fn apply_elf_relocation(
+    base: usize,
+    offset: u64,
+    r_type_raw: u32,
+    sym_value: usize,
+    addend: i64,
+    got: usize,
+) -> Result<(), &'static str> {
+    use arch_traits::ElfRelocation;
+    Arch::apply_relocation(base, offset, r_type_raw, sym_value, addend, got)
+}
+
+/// Check if relocation type is R_*_NONE
+#[inline]
+pub fn is_none_reloc(r_type: u32) -> bool {
+    use arch_traits::ElfRelocation;
+    Arch::is_none_reloc(r_type)
+}
+
+/// Check if relocation type is R_*_RELATIVE
+#[inline]
+pub fn is_relative_reloc(r_type: u32) -> bool {
+    use arch_traits::ElfRelocation;
+    Arch::is_relative_reloc(r_type)
+}
+
+/// Check if relocation type is GOT-related
+#[inline]
+pub fn is_got_reloc(r_type: u32) -> bool {
+    use arch_traits::ElfRelocation;
+    Arch::is_got_reloc(r_type)
+}
+
+// ============================================================================
 // PS/2 Keyboard Interrupt Handling
 // — GraveShift: Fixed missing arch wrappers that broke keyboard input
 // ============================================================================

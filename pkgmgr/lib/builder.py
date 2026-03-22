@@ -39,7 +39,8 @@ class PackageOverride:
         self.custom_build_cmd = None
         self.custom_install_cmd = None
         self.make_target = None  # — WireSaint: 'Override the make target when "all" tries to build tests that fail in cross-compile'
-        
+        self.build_system = None  # — PulseForge: Override auto-detected build system (cmake, meson, autotools, make)
+
         if Path(override_file).exists():
             self._parse(override_file)
     
@@ -102,6 +103,13 @@ class PackageOverride:
         if custom_install_match:
             self.custom_install_cmd = custom_install_match.group(1)
 
+        # — PulseForge: Extract BUILD_SYSTEM override (cmake, meson, autotools, make)
+        # Some packages (like zlib-ng) have both configure AND CMakeLists.txt but
+        # we want to force cmake. Without this, the auto-detector picks configure.
+        build_sys_match = re.search(r'BUILD_SYSTEM\s*=\s*"([^"]*)"', content)
+        if build_sys_match:
+            self.build_system = build_sys_match.group(1).strip()
+
 
 class BuildConfig:
     """Build configuration management"""
@@ -149,19 +157,29 @@ class BuildConfig:
         env['HOST'] = self.target_triple
         env['BUILD'] = 'x86_64-linux-gnu'
         
-        # Set flags
+        # — IronGhost: Set flags. Libraries always get -fPIC so we can relink
+        # the .a objects as .so later. Executables get -static unless building
+        # in dynamic mode. OXIDE_LINK_MODE env var controls this:
+        #   "static" (default) — static linking, executables are self-contained
+        #   "dynamic" — link against .so files via ld-oxide.so.1
+        link_mode = os.environ.get('OXIDE_LINK_MODE', 'static')
         cflags = self.config.get('oxide', 'cflags', fallback='-O2 -fPIC')
-        ldflags = self.config.get('oxide', 'ldflags', fallback='-static')
-        
+        if link_mode == 'dynamic':
+            ldflags = self.config.get('oxide', 'ldflags_dynamic',
+                                      fallback='-L{}/lib'.format(self.sysroot))
+        else:
+            ldflags = self.config.get('oxide', 'ldflags', fallback='-static')
+
         # Apply override flags
         if override and override.extra_cflags:
             cflags = f"{cflags} {override.extra_cflags}"
         if override and override.extra_ldflags:
             ldflags = f"{ldflags} {override.extra_ldflags}"
-        
+
         env['CFLAGS'] = f"{cflags} -I{self.sysroot}/include -DOXIDE_OS"
         env['CXXFLAGS'] = f"{env['CFLAGS']} -fno-exceptions -fno-rtti"
         env['LDFLAGS'] = f"{ldflags} -L{self.sysroot}/lib"
+        env['OXIDE_LINK_MODE'] = link_mode
         env['CPPFLAGS'] = f"-I{self.sysroot}/include -DOXIDE_OS"
         
         # PKG_CONFIG
@@ -276,10 +294,14 @@ class PackageBuilder:
                 if not self._run_hook(build_path, self.override.pre_build_script):
                     self.log("WARNING: Pre-build hook had issues")
             
-            # Step 5: Detect build system
-            self.log("Detecting build system...")
-            build_system = self._detect_build_system(build_path)
-            self.log(f"Build system: {build_system}")
+            # Step 5: Detect build system (or use override)
+            if self.override and self.override.build_system:
+                build_system = self.override.build_system
+                self.log(f"Build system (override): {build_system}")
+            else:
+                self.log("Detecting build system...")
+                build_system = self._detect_build_system(build_path)
+                self.log(f"Build system: {build_system}")
             
             # Step 6: Configure
             if not (self.override and self.override.skip_configure):
@@ -416,7 +438,9 @@ class PackageBuilder:
             if build_system == 'autotools':
                 # Get configure flags from spec
                 spec_flags = spec.get_configure_flags()
-                
+
+                link_mode = env.get('OXIDE_LINK_MODE', 'static')
+
                 # — BlackLatch: 'Autotools needs both --build and --host or it gets confused and segfaults on config.sub.'
                 flags = [
                     '--prefix=/usr',
@@ -424,10 +448,16 @@ class PackageBuilder:
                     '--localstatedir=/var',
                     f'--build=x86_64-linux-gnu',
                     f'--host={self.config.target_triple}',
-                    '--enable-static',
-                    '--disable-shared',
                     '--disable-nls',
                 ]
+
+                # — IronGhost: always build static libs (need .a for sysroot).
+                # In dynamic mode, ALSO build shared libs so we get .so files.
+                flags.append('--enable-static')
+                if link_mode == 'dynamic':
+                    flags.append('--enable-shared')
+                else:
+                    flags.append('--disable-shared')
 
                 flags.extend(spec_flags)
                 
@@ -452,12 +482,15 @@ class PackageBuilder:
             elif build_system == 'cmake':
                 cmake_dir = src_dir / 'build'
                 cmake_dir.mkdir(exist_ok=True)
-                
+
+                link_mode = env.get('OXIDE_LINK_MODE', 'static')
+                shared = 'ON' if link_mode == 'dynamic' else 'OFF'
+
                 flags = [
                     f'-DCMAKE_TOOLCHAIN_FILE={self.config.cmake_toolchain}',
                     '-DCMAKE_BUILD_TYPE=Release',
                     '-DCMAKE_INSTALL_PREFIX=/usr',
-                    '-DBUILD_SHARED_LIBS=OFF',
+                    f'-DBUILD_SHARED_LIBS={shared}',
                 ]
                 
                 subprocess.run(

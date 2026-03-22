@@ -69,6 +69,14 @@ initramfs: $(INITRAMFS_PREREQ)
 			cp "$(USERSPACE_OUT_RELEASE)/$$prog" "$(TARGET_DIR)/initramfs/bin/"; \
 		fi; \
 	done
+	@# — IronGhost: shared libraries are on the ext4 rootfs at /usr/lib/.
+	@# The initramfs only needs statically-linked binaries for the brief
+	@# window before pivot_root. No .so files needed here — saves ~2.5MB.
+	@mkdir -p "$(TARGET_DIR)/initramfs/lib"
+	@# — CrashBloom: dyntest — verifies dynamic linker handoff works.
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/dyntest" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/dyntest" "$(TARGET_DIR)/initramfs/bin/dyntest"; \
+	fi
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs/bin/dir" 2>/dev/null || true
 	@# — BlackLatch: Bare minimum /etc. After pivot_root, ext4's /etc takes over.

@@ -1,0 +1,12 @@
+[package]
+name = "su"
+version = "0.1.0"
+edition = "2024"
+description = "Switch user (su) and sudo for OXIDE OS"
+
+[[bin]]
+name = "su"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../../libs/libc" }

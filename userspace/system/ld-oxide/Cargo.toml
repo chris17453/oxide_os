@@ -1,0 +1,14 @@
+[package]
+name = "ld-oxide"
+version = "0.1.0"
+edition = "2024"
+description = "OXIDE OS dynamic linker/loader (ld-oxide.so.1)"
+
+[[bin]]
+name = "ld-oxide"
+path = "src/main.rs"
+
+# — IronGhost: ld-oxide is fully self-contained. No libc dependency.
+# It provides its own _start, syscall wrappers, and allocator.
+# The dynamic linker must work before any shared libraries are loaded.
+[dependencies]

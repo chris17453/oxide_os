@@ -50,6 +50,9 @@
 #define _SC_SYMLOOP_MAX         173
 #define _SC_THREAD_SAFE_FUNCTIONS 68
 
+#define _CS_PATH        0
+#define _CS_GNU_LIBC_VERSION 1
+
 #define _PC_PATH_MAX    4
 #define _PC_NAME_MAX    3
 #define _PC_PIPE_BUF    5

@@ -605,7 +605,9 @@ pub static mut stdout: *mut FILE = core::ptr::null_mut();
 pub static mut stderr: *mut FILE = core::ptr::null_mut();
 
 /// Initialize standard streams - must be called from _start
-pub unsafe fn init_stdio() {
+/// — GraveShift: exported for crt0.o in dynamically-linked binaries
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn init_stdio() {
     stdin = &raw mut STDIN_FILE;
     stdout = &raw mut STDOUT_FILE;
     stderr = &raw mut STDERR_FILE;

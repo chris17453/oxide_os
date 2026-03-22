@@ -22,7 +22,8 @@ struct PasswdEntry {
     shell: &'static str,
 }
 
-/// Built-in user database (in real system, read from /etc/passwd and /etc/shadow)
+/// — ColdCipher: built-in fallback user database. The real lookup reads /etc/passwd
+/// at runtime via lookup_passwd(). These are only used if /etc/passwd can't be read.
 static USERS: &[PasswdEntry] = &[
     PasswdEntry {
         username: "root",
@@ -41,6 +42,89 @@ static USERS: &[PasswdEntry] = &[
         shell: "/bin/esh",
     },
 ];
+
+/// — ColdCipher: parse /etc/passwd to find a user entry.
+/// Format: name:password:uid:gid:gecos:home:shell
+/// Returns a PasswdEntry if found, None otherwise.
+fn lookup_passwd(username: &str) -> Option<PasswdEntry> {
+    let fd = open2("/etc/passwd", 0); // O_RDONLY
+    if fd < 0 { return None; }
+
+    let mut buf = [0u8; 4096];
+    let n = read(fd, &mut buf);
+    close(fd);
+    if n <= 0 { return None; }
+
+    let data = &buf[..n as usize];
+    let mut line_start = 0;
+
+    while line_start < data.len() {
+        let mut line_end = line_start;
+        while line_end < data.len() && data[line_end] != b'\n' { line_end += 1; }
+
+        let line = &data[line_start..line_end];
+        // Split by : into fields
+        let mut fields: [usize; 8] = [0; 8];
+        let mut fc = 0;
+        fields[0] = 0;
+        fc = 1;
+        for j in 0..line.len() {
+            if line[j] == b':' && fc < 8 { fields[fc] = j + 1; fc += 1; }
+        }
+
+        if fc >= 7 {
+            let name_end = fields[1] - 1;
+            let name = &line[0..name_end];
+            if name == username.as_bytes() {
+                // Parse uid (field 2), gid (field 3)
+                let uid_start = fields[2]; let uid_end = fields[3] - 1;
+                let gid_start = fields[3]; let gid_end = fields[4] - 1;
+                let home_start = fields[5]; let home_end = fields[6] - 1;
+                let shell_start = fields[6]; let shell_end = line.len();
+
+                let uid = parse_u32_bytes(&line[uid_start..uid_end]).unwrap_or(65534);
+                let gid = parse_u32_bytes(&line[gid_start..gid_end]).unwrap_or(65534);
+
+                // — ColdCipher: store strings in static buffers (ugly but no_std)
+                static mut HOME_BUF: [u8; 64] = [0; 64];
+                static mut SHELL_BUF: [u8; 64] = [0; 64];
+                let home_len = core::cmp::min(home_end - home_start, 63);
+                let shell_len = core::cmp::min(shell_end - shell_start, 63);
+                unsafe {
+                    HOME_BUF[..home_len].copy_from_slice(&line[home_start..home_start + home_len]);
+                    HOME_BUF[home_len] = 0;
+                    SHELL_BUF[..shell_len].copy_from_slice(&line[shell_start..shell_start + shell_len]);
+                    SHELL_BUF[shell_len] = 0;
+                }
+
+                // Store username in static buffer too
+                static mut USER_BUF: [u8; 64] = [0; 64];
+                let name_len = core::cmp::min(name_end, 63);
+                unsafe {
+                    USER_BUF[..name_len].copy_from_slice(&line[0..name_len]);
+                    USER_BUF[name_len] = 0;
+                }
+
+                return Some(PasswdEntry {
+                    username: unsafe { core::str::from_utf8_unchecked(&USER_BUF[..name_len]) },
+                    default_password: "", // password auth via /etc/shadow in future
+                    uid,
+                    gid,
+                    home: unsafe { core::str::from_utf8_unchecked(&HOME_BUF[..home_len]) },
+                    shell: unsafe { core::str::from_utf8_unchecked(&SHELL_BUF[..shell_len]) },
+                });
+            }
+        }
+        line_start = line_end + 1;
+    }
+    None
+}
+
+fn parse_u32_bytes(s: &[u8]) -> Option<u32> {
+    let mut val = 0u32;
+    for &b in s { if b < b'0' || b > b'9' { return None; } val = val * 10 + (b - b'0') as u32; }
+    Some(val)
+}
 
 /// Maximum input length
 const MAX_INPUT: usize = 256;
@@ -224,8 +308,22 @@ pub extern "C" fn login_set_root_password(ptr: *const u8, len: usize) {
     }
 }
 
-/// Look up user in database
+/// — ColdCipher: look up user — tries /etc/passwd first, falls back to hardcoded.
+/// This is how a real login works: reads the system user database at runtime.
+static mut DYNAMIC_ENTRY: Option<PasswdEntry> = None;
+
 fn lookup_user(username: &[u8]) -> Option<&'static PasswdEntry> {
+    // Try /etc/passwd first
+    if let Ok(name_str) = core::str::from_utf8(username) {
+        let name = name_str.trim_end_matches('\0');
+        if let Some(entry) = lookup_passwd(name) {
+            unsafe {
+                *(&raw mut DYNAMIC_ENTRY) = Some(entry);
+                return (*(&raw const DYNAMIC_ENTRY)).as_ref();
+            }
+        }
+    }
+    // Fall back to hardcoded database
     for entry in USERS {
         if str_eq(username, entry.username) {
             return Some(entry);
@@ -285,7 +383,9 @@ pub fn main() -> i32 {
             if pid == 0 {
                 setenv("HOME", entry.home);
                 setenv("USER", entry.username);
+                setenv("LOGNAME", entry.username);
                 setenv("SHELL", entry.shell);
+                setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin");
                 setenv("PWD", entry.home);
                 let _ = chdir(entry.home);
                 let _ = setgid(entry.gid);

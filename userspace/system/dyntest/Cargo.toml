@@ -1,0 +1,12 @@
+[package]
+name = "dyntest"
+version = "0.1.0"
+edition = "2024"
+description = "Dynamic linking test program for OXIDE OS"
+
+[[bin]]
+name = "dyntest"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../../libs/libc" }

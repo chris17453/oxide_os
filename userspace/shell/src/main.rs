@@ -13,7 +13,31 @@
 #![no_main]
 #![allow(unused)]
 
+extern crate alloc;
+
+/// — ByteRiot: debug tracing for the shell parser/evaluator.
+/// Compiles to nothing unless `debug-shell` feature is enabled.
+#[cfg(feature = "debug-shell")]
+macro_rules! debug_shell {
+    ($($arg:tt)*) => {
+        eprints("[esh-dbg] ");
+        eprintlns(core::concat!($($arg)*));
+    };
+}
+
+#[cfg(not(feature = "debug-shell"))]
+macro_rules! debug_shell {
+    ($($arg:tt)*) => {};
+}
+
 mod theme;
+mod token;
+mod ast;
+mod parser;
+mod expand;
+mod eval;
+mod builtins;
+mod jobs;
 
 use libc::*;
 use theme::{
@@ -366,6 +390,55 @@ fn shell() -> &'static mut ShellState {
     unsafe { &mut *core::ptr::addr_of_mut!(SHELL) }
 }
 
+/// Global evaluator for the new AST-based execution engine
+/// — ByteRiot: the single brain driving the whole shell. All state lives here.
+static mut EVALUATOR: Option<eval::Evaluator> = None;
+
+/// Get or initialize the global evaluator
+fn get_eval() -> &'static mut eval::Evaluator {
+    unsafe {
+        let ptr = core::ptr::addr_of_mut!(EVALUATOR);
+        if (*ptr).is_none() {
+            *ptr = Some(eval::Evaluator::new());
+        }
+        (*ptr).as_mut().unwrap()
+    }
+}
+
+/// Execute a command line using the new AST pipeline: tokenize → parse → eval
+/// — ByteRiot: the new hotness. No more string matching, no more regex-lite
+/// hacks. A proper lexer feeds a recursive descent parser that builds an AST
+/// which an evaluator walks. Like a real shell.
+fn execute_ast(line: &[u8]) {
+    if line.is_empty() { return; }
+
+    // Trim trailing NUL and whitespace
+    let mut end = line.len();
+    while end > 0 && (line[end - 1] == 0 || line[end - 1] == b' ' || line[end - 1] == b'\t') {
+        end -= 1;
+    }
+    if end == 0 { return; }
+    let line = &line[..end];
+
+    // Skip comments
+    if line.first() == Some(&b'#') { return; }
+
+    let tokens = token::tokenize(line);
+    match parser::parse(tokens) {
+        Ok(prog) => {
+            let ev = get_eval();
+            ev.eval_program(&prog);
+            // Sync last_status back to old ShellState for compatibility
+            shell().last_status = ev.last_status;
+        }
+        Err(e) => {
+            eprints("esh: parse error: ");
+            eprintlns(e.message);
+            shell().last_status = 2;
+        }
+    }
+}
+
 /// Redirection types
 #[derive(Clone, Copy)]
 enum Redirect {
@@ -446,7 +519,60 @@ unsafe extern "C" fn shell_completion(text: *const u8, start: i32, _end: i32) ->
         if is_first_word && !has_slash {
             num_completions = complete_commands(prefix, text_len, &mut completions);
         } else {
-            num_completions = complete_paths(prefix, text_len, &mut completions);
+            // — ThreadRogue: check programmable completions before falling back to paths.
+            // If the current command has a registered `complete -W` spec, use that instead.
+            let rl_buf = libc::readline::rl_line_buffer;
+            let mut cmd_word = [0u8; 64];
+            if !rl_buf.is_null() {
+                let mut ci = 0;
+                let mut p = rl_buf;
+                while *p != 0 && *p != b' ' && ci < 63 {
+                    cmd_word[ci] = *p;
+                    ci += 1;
+                    p = p.add(1);
+                }
+                if ci > 0 {
+                    if let Some((ctype, words)) = builtins::lookup_completion_spec(&cmd_word[..ci]) {
+                        if ctype == 1 { // COMP_WORDS
+                            // Split word list on spaces, match against prefix
+                            let mut count = 0;
+                            let mut wi = 0;
+                            while wi < words.len() && count < MAX_COMPLETIONS {
+                                while wi < words.len() && (words[wi] == b' ' || words[wi] == b'\t') { wi += 1; }
+                                let wstart = wi;
+                                while wi < words.len() && words[wi] != b' ' && words[wi] != b'\t' { wi += 1; }
+                                if wi > wstart {
+                                    let w = &words[wstart..wi];
+                                    if prefix_matches(prefix, text_len, w) {
+                                        let len = w.len().min(62);
+                                        completions[count][..len].copy_from_slice(&w[..len]);
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            if count > 0 {
+                                num_completions = count;
+                                // Skip default path completion
+                                if num_completions == 0 {
+                                    return core::ptr::null_mut();
+                                }
+                                // Build result below
+                                // (fall through to build array)
+                            } else {
+                                num_completions = complete_paths(prefix, text_len, &mut completions);
+                            }
+                        } else {
+                            num_completions = complete_paths(prefix, text_len, &mut completions);
+                        }
+                    } else {
+                        num_completions = complete_paths(prefix, text_len, &mut completions);
+                    }
+                } else {
+                    num_completions = complete_paths(prefix, text_len, &mut completions);
+                }
+            } else {
+                num_completions = complete_paths(prefix, text_len, &mut completions);
+            }
         }
 
         if num_completions == 0 {
@@ -519,16 +645,50 @@ unsafe extern "C" fn shell_completion(text: *const u8, start: i32, _end: i32) ->
 
 /// Main shell entry point
 #[unsafe(no_mangle)]
-fn main() -> i32 {
+fn main(argc: i32, argv: *const *const u8) -> i32 {
+    // — ByteRiot: handle -c "command" mode for command substitution and scripts.
+    // This is how $(cmd) works: fork, exec esh -c "cmd", capture stdout.
+    if argc >= 3 {
+        let arg1 = unsafe { *argv.add(1) };
+        if !arg1.is_null() {
+            let b0 = unsafe { *arg1 };
+            let b1 = unsafe { *arg1.add(1) };
+            let b2 = unsafe { *arg1.add(2) };
+            if b0 == b'-' && b1 == b'c' && b2 == 0 {
+                // -c mode: execute the command string and exit
+                let cmd_ptr = unsafe { *argv.add(2) };
+                if !cmd_ptr.is_null() {
+                    let mut len = 0usize;
+                    unsafe { while *cmd_ptr.add(len) != 0 { len += 1; } }
+                    let cmd = unsafe { core::slice::from_raw_parts(cmd_ptr, len) };
+                    execute_ast(cmd);
+                    return shell().last_status;
+                }
+                return 0;
+            }
+        }
+    }
+
     // Put shell in its own process group
     setpgid(0, 0);
 
     // Make this shell the foreground process group of the controlling terminal
     tcsetpgrp(0, getpid());
 
-    // Ignore SIGINT (Ctrl+C) in the shell itself
-    // Child processes will inherit default SIGINT behavior
-    signal(SIGINT, SIG_IGN);
+    // — ThreadRogue: use a real SIGINT handler instead of SIG_IGN.
+    // The handler sets a flag that the evaluator checks between commands.
+    // This way Ctrl+C can interrupt shell loops (for/while) while still
+    // keeping the shell alive. Child processes get SIG_DFL via exec.
+    #[allow(function_casts_as_integer)]
+    signal(SIGINT, eval::sigint_handler as u64);
+
+    // — ThreadRogue: ignore SIGTSTP/SIGTTIN/SIGTTOU in the shell itself.
+    // An interactive shell MUST NOT be stopped by Ctrl+Z — only its children.
+    // Children reset to SIG_DFL before exec, so they'll stop normally.
+    // Without this, Ctrl+Z freezes the entire shell. Game over. — ThreadRogue
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
 
     // — GraveShift: cursor escape codes removed. The GOP framebuffer shows the
     // terminal cursor via paint_cursor() — no need for DEC Private Mode toggles
@@ -539,8 +699,23 @@ fn main() -> i32 {
         libc::readline::rl_attempted_completion_function = Some(shell_completion);
     }
 
-    // Source system profile to set PATH and other environment variables
+    // — SableWire: source profiles like Linux — system first, then user.
+    // /etc/profile sets system-wide PATH, umask, etc.
+    // ~/.profile sets user-specific customizations.
+    // login already sets HOME before exec'ing us, so ~ expansion works.
     source_profile(b"/etc/profile\0");
+
+    // Source user profile (~/.profile)
+    if let Some(home) = getenv("HOME") {
+        let mut user_profile = [0u8; 128];
+        let hb = home.as_bytes();
+        if hb.len() + 10 < 127 {
+            user_profile[..hb.len()].copy_from_slice(hb);
+            let suffix = b"/.profile\0";
+            user_profile[hb.len()..hb.len() + suffix.len()].copy_from_slice(suffix);
+            source_profile(&user_profile);
+        }
+    }
 
     // Load theme from environment variable if set
     if let Some(theme_name) = getenv("ESH_THEME") {
@@ -559,6 +734,16 @@ fn main() -> i32 {
 
     // Main shell loop
     loop {
+        // — ThreadRogue: clear any stale SIGINT from previous command.
+        // We want a fresh flag state for each command line.
+        eval::clear_sigint();
+
+        // — ThreadRogue: re-register SIGINT handler every iteration. Defensive
+        // against anything that might have reset it to SIG_DFL (exec failures,
+        // builtin_command, etc). An interactive shell MUST survive Ctrl+C.
+        #[allow(function_casts_as_integer)]
+        signal(SIGINT, eval::sigint_handler as u64);
+
         // Build prompt string (NUL-terminated)
         let prompt = get_prompt_string();
 
@@ -566,7 +751,15 @@ fn main() -> i32 {
         let line_ptr = unsafe { libc::readline::readline(prompt.as_ptr()) };
 
         if line_ptr.is_null() {
-            // EOF (Ctrl-D on empty line)
+            // — ThreadRogue: readline returns NULL on Ctrl+D (EOF on empty line).
+            // If SIGINT is pending, something interrupted readline — re-prompt.
+            // For a login shell, also re-prompt on EOF to prevent accidental logout.
+            // Only `exit` should terminate the login shell.
+            if eval::check_sigint() {
+                printlns("");
+                continue;
+            }
+            // Genuine EOF (Ctrl-D on empty line) — exit the shell
             printlns("");
             break;
         }
@@ -594,12 +787,17 @@ fn main() -> i32 {
         // Add to readline's history (deduplication handled internally)
         unsafe { libc::readline::add_history(line_ptr) };
 
-        // Execute command
-        execute_line(cmd);
+        // — ByteRiot: execute through the new AST pipeline.
+        // Tokenize → Parse → Evaluate. No more string-matching hacks.
+        execute_ast(cmd);
 
         // Free the malloc'd line
         unsafe { libc::c_exports::free(line_ptr) };
     }
+
+    // — ByteRiot: EOF or broken pipe — fire the EXIT trap before we go dark.
+    // The shell is dying, but trap handlers get one last gasp.
+    get_eval().fire_exit_trap();
 
     0
 }
@@ -635,6 +833,7 @@ const BUILTINS: &[&[u8]] = &[
     b"cd",
     b"colors",
     b"command",
+    b"complete",
     b"declare",
     b"echo",
     b"eval",
@@ -654,6 +853,7 @@ const BUILTINS: &[&[u8]] = &[
     b"pwd",
     b"read",
     b"readonly",
+    b"select",
     b"set",
     b"shift",
     b"source",
@@ -902,7 +1102,231 @@ fn trim(s: &[u8]) -> &[u8] {
 }
 
 /// Execute a command line (may contain pipes)
+/// — SableWire: expand $VAR and ${VAR} in a line. Replaces variable references
+/// with their values from the environment. Single-quoted strings are NOT expanded.
+/// Also expands $? (last exit status), $$ (PID), $# (arg count).
+fn expand_variables(input: &[u8], output: &mut [u8; 512]) -> usize {
+    let mut i = 0;
+    let mut o = 0;
+    let mut in_single_quote = false;
+
+    while i < input.len() && input[i] != 0 && o < 510 {
+        let ch = input[i];
+
+        // Track single quotes (no expansion inside)
+        if ch == b'\'' && !in_single_quote {
+            in_single_quote = true;
+            output[o] = ch; o += 1; i += 1;
+            continue;
+        }
+        if ch == b'\'' && in_single_quote {
+            in_single_quote = false;
+            output[o] = ch; o += 1; i += 1;
+            continue;
+        }
+
+        // — SableWire: expand $VAR, ${VAR}, $?, $$
+        if ch == b'$' && !in_single_quote && i + 1 < input.len() {
+            i += 1;
+            let next = input[i];
+
+            if next == b'?' {
+                // $? — last exit status
+                let status = unsafe { SHELL.last_status };
+                let s = format_i32(status);
+                for &b in &s { if b == 0 { break; } if o < 510 { output[o] = b; o += 1; } }
+                i += 1;
+            } else if next == b'$' {
+                // $$ — PID
+                let pid = syscall::sys_getpid();
+                let s = format_i32(pid);
+                for &b in &s { if b == 0 { break; } if o < 510 { output[o] = b; o += 1; } }
+                i += 1;
+            } else if next == b'(' {
+                // $(...) — command substitution
+                // — SableWire: find matching ), execute command, capture stdout
+                i += 1; // skip (
+                let cmd_start = i;
+                let mut depth = 1;
+                while i < input.len() && input[i] != 0 && depth > 0 {
+                    if input[i] == b'(' { depth += 1; }
+                    if input[i] == b')' { depth -= 1; }
+                    if depth > 0 { i += 1; }
+                }
+                let cmd_bytes = &input[cmd_start..i];
+                if i < input.len() && input[i] == b')' { i += 1; } // skip )
+
+                // Execute command and capture output via pipe
+                let mut pipefd = [0i32; 2];
+                if syscall::sys_pipe(&mut pipefd) == 0 {
+                    let pid = fork();
+                    if pid == 0 {
+                        // Child: redirect stdout to pipe write end, exec command
+                        close(pipefd[0]);
+                        dup2(pipefd[1], 1); // stdout → pipe
+                        close(pipefd[1]);
+                        // Execute the command
+                        let mut cmd_buf = [0u8; 256];
+                        let cmd_len = core::cmp::min(cmd_bytes.len(), 255);
+                        cmd_buf[..cmd_len].copy_from_slice(&cmd_bytes[..cmd_len]);
+                        cmd_buf[cmd_len] = 0;
+                        execute_line(&cmd_buf[..cmd_len]);
+                        syscall::sys_exit(0);
+                    } else if pid > 0 {
+                        // Parent: read from pipe read end
+                        close(pipefd[1]);
+                        let mut cap_buf = [0u8; 256];
+                        let n = read(pipefd[0], &mut cap_buf);
+                        close(pipefd[0]);
+                        let mut status = 0;
+                        waitpid(pid, &mut status, 0);
+                        // Copy captured output (strip trailing newline)
+                        if n > 0 {
+                            let mut cap_len = n as usize;
+                            while cap_len > 0 && cap_buf[cap_len - 1] == b'\n' { cap_len -= 1; }
+                            for j in 0..cap_len {
+                                if o < 510 { output[o] = cap_buf[j]; o += 1; }
+                            }
+                        }
+                    } else {
+                        // Fork failed — leave $() unexpanded
+                        close(pipefd[0]);
+                        close(pipefd[1]);
+                    }
+                }
+            } else if next == b'{' {
+                // ${VAR} — braced variable
+                i += 1; // skip {
+                let var_start = i;
+                while i < input.len() && input[i] != b'}' && input[i] != 0 { i += 1; }
+                let var_name = &input[var_start..i];
+                if i < input.len() && input[i] == b'}' { i += 1; } // skip }
+                if let Some(val) = getenv_bytes(var_name) {
+                    for &b in val {
+                        if o < 510 { output[o] = b; o += 1; }
+                    }
+                }
+            } else if next.is_ascii_alphanumeric() || next == b'_' {
+                // $VAR — unbraced variable
+                let var_start = i;
+                while i < input.len() && (input[i].is_ascii_alphanumeric() || input[i] == b'_') {
+                    i += 1;
+                }
+                let var_name = &input[var_start..i];
+                if let Some(val) = getenv_bytes(var_name) {
+                    for &b in val {
+                        if o < 510 { output[o] = b; o += 1; }
+                    }
+                }
+            } else {
+                // Literal $ followed by something else
+                output[o] = b'$'; o += 1;
+                // Don't consume `next` — let it be processed normally
+            }
+        } else {
+            output[o] = ch; o += 1; i += 1;
+        }
+    }
+    output[o] = 0;
+    o
+}
+
+/// — SableWire: look up env var by byte name (not str)
+fn getenv_bytes(name: &[u8]) -> Option<&'static [u8]> {
+    // Convert to str for getenv
+    if let Ok(s) = core::str::from_utf8(name) {
+        if let Some(val) = getenv(s) {
+            return Some(val.as_bytes());
+        }
+    }
+    None
+}
+
+/// — SableWire: format i32 to decimal string (stack buffer)
+fn format_i32(mut val: i32) -> [u8; 12] {
+    let mut buf = [0u8; 12];
+    let negative = val < 0;
+    if negative { val = -val; }
+    let mut i = 11;
+    if val == 0 { buf[i] = b'0'; i -= 1; }
+    while val > 0 { buf[i] = b'0' + (val % 10) as u8; val /= 10; i -= 1; }
+    if negative { buf[i] = b'-'; i -= 1; }
+    // Shift to start
+    let start = i + 1;
+    let len = 12 - start;
+    let mut result = [0u8; 12];
+    result[..len].copy_from_slice(&buf[start..12]);
+    result
+}
+
 fn execute_line(line: &[u8]) {
+    let line = trim(line);
+    if line.is_empty() { return; }
+
+    // — SableWire: expand $VAR before any parsing
+    let mut expanded = [0u8; 512];
+    let exp_len = expand_variables(line, &mut expanded);
+    let line = &expanded[..exp_len];
+
+    // — SableWire: split by ; && || for multi-command lines.
+    // The PRECEDING separator determines whether to run the CURRENT segment:
+    //   `;` or start → always run
+    //   `&&` → run only if previous command succeeded (exit 0)
+    //   `||` → run only if previous command failed (exit != 0)
+    let mut pos = 0;
+    let mut prev_sep: u8 = b';'; // first command always runs
+
+    while pos < line.len() && line[pos] != 0 {
+        // Skip whitespace
+        while pos < line.len() && (line[pos] == b' ' || line[pos] == b'\t') { pos += 1; }
+        if pos >= line.len() || line[pos] == 0 { break; }
+
+        // Find the next ;, &&, or ||
+        let cmd_start = pos;
+        let mut in_sq = false;
+        let mut in_dq = false;
+        let mut next_sep: u8 = 0; // 0 = end of line
+
+        while pos < line.len() && line[pos] != 0 {
+            let ch = line[pos];
+            if ch == b'\'' && !in_dq { in_sq = !in_sq; }
+            if ch == b'"' && !in_sq { in_dq = !in_dq; }
+            if !in_sq && !in_dq {
+                if ch == b';' { next_sep = b';'; break; }
+                if ch == b'&' && pos + 1 < line.len() && line[pos + 1] == b'&' { next_sep = b'&'; break; }
+                if ch == b'|' && pos + 1 < line.len() && line[pos + 1] == b'|' { next_sep = b'|'; break; }
+            }
+            pos += 1;
+        }
+
+        let cmd_end = pos;
+        let segment = &line[cmd_start..cmd_end];
+
+        // — SableWire: the PRECEDING separator controls whether we run THIS segment
+        let last_status = unsafe { SHELL.last_status };
+        let should_run = match prev_sep {
+            b'&' => last_status == 0,  // && — only if previous succeeded
+            b'|' => last_status != 0,  // || — only if previous failed
+            _ => true,                  // ; or start — always run
+        };
+
+        if should_run && !segment.is_empty() {
+            execute_single_line(segment);
+        }
+
+        // The separator we just found becomes the preceding separator for the NEXT segment
+        prev_sep = next_sep;
+
+        // Skip the separator
+        if pos < line.len() {
+            if next_sep == b';' { pos += 1; }
+            else if next_sep == b'&' || next_sep == b'|' { pos += 2; }
+        }
+    }
+}
+
+/// Execute a single command line (may contain pipes, redirections, background)
+fn execute_single_line(line: &[u8]) {
     // Check for background execution
     let (line, background) = if line.last() == Some(&b'&') {
         (&line[..line.len() - 1], true)
@@ -912,6 +1336,28 @@ fn execute_line(line: &[u8]) {
 
     let line = trim(line);
     if line.is_empty() {
+        return;
+    }
+
+    // — SableWire: handle if/then/else/fi (single-line form)
+    // Format: if COND; then CMD1; else CMD2; fi
+    // or: if COND; then CMD1; fi
+    if starts_with_word(line, b"if") {
+        execute_if_block(line);
+        return;
+    }
+
+    // — SableWire: handle for loops (single-line form)
+    // Format: for VAR in WORD...; do CMD; done
+    if starts_with_word(line, b"for") {
+        execute_for_block(line);
+        return;
+    }
+
+    // — SableWire: handle while loops (single-line form)
+    // Format: while COND; do CMD; done
+    if starts_with_word(line, b"while") {
+        execute_while_block(line);
         return;
     }
 
@@ -931,6 +1377,184 @@ fn execute_line(line: &[u8]) {
 
     // Execute pipeline
     execute_pipeline(&commands, num_commands, background);
+}
+
+/// — SableWire: check if line starts with a specific word (followed by whitespace)
+fn starts_with_word(line: &[u8], word: &[u8]) -> bool {
+    if line.len() < word.len() { return false; }
+    if &line[..word.len()] != word { return false; }
+    if line.len() == word.len() { return true; }
+    line[word.len()] == b' ' || line[word.len()] == b'\t' || line[word.len()] == b';'
+}
+
+/// — SableWire: find a keyword in a line (respecting ;), return its offset.
+/// Searches for ` keyword ` or `;keyword ` or `; keyword`.
+fn find_keyword(line: &[u8], keyword: &[u8]) -> Option<usize> {
+    let klen = keyword.len();
+    if line.len() < klen { return None; }
+    for i in 0..=line.len() - klen {
+        if &line[i..i + klen] == keyword {
+            // Must be at start, after ';' or space, and followed by space/';'/end
+            let before_ok = i == 0 || line[i - 1] == b' ' || line[i - 1] == b';' || line[i - 1] == b'\t';
+            let after_ok = i + klen >= line.len() || line[i + klen] == b' ' || line[i + klen] == b';' || line[i + klen] == b'\t' || line[i + klen] == 0;
+            if before_ok && after_ok { return Some(i); }
+        }
+    }
+    None
+}
+
+/// — SableWire: execute if/then/else/fi block.
+/// Supports: if COND; then CMD; fi
+///           if COND; then CMD; else CMD; fi
+fn execute_if_block(line: &[u8]) {
+    // Skip "if "
+    let rest = trim(&line[2..]);
+
+    // Find "then"
+    let then_pos = match find_keyword(rest, b"then") {
+        Some(p) => p,
+        None => return, // malformed — no then
+    };
+
+    let condition = trim(&rest[..then_pos]);
+    let after_then = trim(&rest[then_pos + 4..]);
+
+    // Find "fi"
+    let fi_pos = match find_keyword(after_then, b"fi") {
+        Some(p) => p,
+        None => return, // malformed — no fi
+    };
+
+    let body = &after_then[..fi_pos];
+
+    // Check for "else"
+    let (then_body, else_body) = if let Some(else_pos) = find_keyword(body, b"else") {
+        (trim(&body[..else_pos]), Some(trim(&body[else_pos + 4..])))
+    } else {
+        (trim(body), None)
+    };
+
+    // Execute condition
+    // Strip trailing ; from condition if present
+    let cond = trim(condition);
+    let cond = if cond.last() == Some(&b';') { &cond[..cond.len() - 1] } else { cond };
+    execute_line(cond);
+
+    let status = unsafe { SHELL.last_status };
+    if status == 0 {
+        // Condition true — execute then body
+        let body = trim(then_body);
+        let body = if body.last() == Some(&b';') { &body[..body.len() - 1] } else { body };
+        if !body.is_empty() { execute_line(body); }
+    } else if let Some(eb) = else_body {
+        // Condition false — execute else body
+        let body = trim(eb);
+        let body = if body.last() == Some(&b';') { &body[..body.len() - 1] } else { body };
+        if !body.is_empty() { execute_line(body); }
+    }
+}
+
+/// — SableWire: execute for loop.
+/// Format: for VAR in WORD1 WORD2 ...; do CMD; done
+fn execute_for_block(line: &[u8]) {
+    // Skip "for "
+    let rest = trim(&line[3..]);
+
+    // Find variable name (until ' ' or 'in')
+    let mut i = 0;
+    while i < rest.len() && rest[i] != b' ' && rest[i] != b'\t' { i += 1; }
+    let var_name = &rest[..i];
+
+    let rest = trim(&rest[i..]);
+
+    // Expect "in"
+    if !starts_with_word(rest, b"in") { return; }
+    let rest = trim(&rest[2..]);
+
+    // Find "do"
+    let do_pos = match find_keyword(rest, b"do") {
+        Some(p) => p,
+        None => return,
+    };
+
+    let word_list = trim(&rest[..do_pos]);
+    let after_do = trim(&rest[do_pos + 2..]);
+
+    // Find "done"
+    let done_pos = match find_keyword(after_do, b"done") {
+        Some(p) => p,
+        None => return,
+    };
+
+    let body = trim(&after_do[..done_pos]);
+
+    // Parse word list (split by whitespace)
+    let word_list = if word_list.last() == Some(&b';') { &word_list[..word_list.len() - 1] } else { word_list };
+    let body = if body.last() == Some(&b';') { &body[..body.len() - 1] } else { body };
+
+    // Iterate over words
+    let mut wpos = 0;
+    while wpos < word_list.len() {
+        while wpos < word_list.len() && (word_list[wpos] == b' ' || word_list[wpos] == b'\t') { wpos += 1; }
+        if wpos >= word_list.len() { break; }
+        let wstart = wpos;
+        while wpos < word_list.len() && word_list[wpos] != b' ' && word_list[wpos] != b'\t' && word_list[wpos] != b';' { wpos += 1; }
+        let word = &word_list[wstart..wpos];
+        if word.is_empty() { continue; }
+
+        // Set the variable
+        if let Ok(vname) = core::str::from_utf8(var_name) {
+            if let Ok(vval) = core::str::from_utf8(word) {
+                setenv(vname, vval);
+            }
+        }
+
+        // Execute body (re-expand variables each iteration)
+        execute_line(body);
+    }
+}
+
+/// — SableWire: execute while loop.
+/// Format: while COND; do CMD; done
+fn execute_while_block(line: &[u8]) {
+    // Skip "while "
+    let rest = trim(&line[5..]);
+
+    // Find "do"
+    let do_pos = match find_keyword(rest, b"do") {
+        Some(p) => p,
+        None => return,
+    };
+
+    let condition = trim(&rest[..do_pos]);
+    let after_do = trim(&rest[do_pos + 2..]);
+
+    // Find "done"
+    let done_pos = match find_keyword(after_do, b"done") {
+        Some(p) => p,
+        None => return,
+    };
+
+    let body = trim(&after_do[..done_pos]);
+    let condition = if condition.last() == Some(&b';') { &condition[..condition.len() - 1] } else { condition };
+    let body = if body.last() == Some(&b';') { &body[..body.len() - 1] } else { body };
+
+    // Loop while condition is true (exit 0)
+    // — ThreadRogue: check SIGINT every iteration or Ctrl+C is swallowed forever
+    let max_iterations = 10000; // safety limit
+    for _ in 0..max_iterations {
+        if crate::eval::check_sigint() {
+            unsafe { SHELL.last_status = 130; } // 128 + SIGINT
+            break;
+        }
+        execute_line(condition);
+        if unsafe { SHELL.last_status } != 0 { break; }
+        if crate::eval::check_sigint() {
+            unsafe { SHELL.last_status = 130; }
+            break;
+        }
+        execute_line(body);
+    }
 }
 
 /// Split line by pipes and parse redirections
@@ -1195,9 +1819,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
     }
 
     // Wait for all children
-    // — GraveShift: Retry on EINTR. When the child dies from SIGINT, the shell may
-    // also get woken up with EINTR. The child is still a zombie until we reap it.
-    // Loop until waitpid actually returns the child PID or an unrecoverable error.
+    // — GraveShift: wait for children, but don't blindly retry on EINTR.
+    // If SIGINT arrived (shell's handler set the flag), kill the child and bail.
+    // The old code retried waitpid on EINTR forever — Ctrl+C was swallowed.
     if !background {
         for i in 0..num_commands {
             let mut status = 0;
@@ -1206,7 +1830,35 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                 if ret == pids[i] || (ret < 0 && ret != -(libc::errno::EINTR as i32)) {
                     break;
                 }
-                // EINTR — retry
+                // — ThreadRogue: EINTR means a signal arrived. If it's SIGINT,
+                // kill the child and stop waiting. Otherwise retry.
+                if crate::eval::check_sigint() {
+                    kill(pids[i], 9); // SIGKILL the child
+                    waitpid(pids[i], &mut status, 0); // reap zombie
+                    status = 2; // encode as killed-by-SIGINT
+                    crate::eval::sigint_handler_set(); // re-set flag for while loop
+                    break;
+                }
+            }
+            // — SableWire: capture exit status of the LAST command in the pipeline.
+            // This is what $? and && / || check.
+            if i == num_commands - 1 {
+                // — ThreadRogue: if the child was killed by a signal, propagate it.
+                // WIFSIGNALED: (status & 0x7F) != 0
+                // WTERMSIG: status & 0x7F
+                let termsig = status & 0x7F;
+                if termsig != 0 {
+                    shell().last_status = 128 + termsig;
+                    // — ThreadRogue: if child died from SIGINT (signal 2), set the
+                    // flag so the while loop's check_sigint() catches it. Without
+                    // this, Ctrl+C kills the child but the shell's while loop
+                    // happily continues to the next iteration.
+                    if termsig == 2 {
+                        crate::eval::sigint_handler_set();
+                    }
+                } else {
+                    shell().last_status = (status >> 8) & 0xFF; // WEXITSTATUS
+                }
             }
         }
 
@@ -1414,10 +2066,10 @@ fn execute_builtin(cmd: &Command) {
         printlns("");
         printlns("Tab Completion:");
         printlns("  Press TAB to complete commands and file paths");
-    } else if bytes_eq(&cmd.args[0], b"true") {
-        // Do nothing, exit 0
+    } else if bytes_eq(&cmd.args[0], b"true") || bytes_eq(&cmd.args[0], b":") {
+        shell().last_status = 0;
     } else if bytes_eq(&cmd.args[0], b"false") {
-        // Note: this won't affect exit code in builtins
+        shell().last_status = 1;
     } else if bytes_eq(&cmd.args[0], b"export") {
         if cmd.argc < 2 {
             // List all environment variables (like Linux export without args)
@@ -1491,7 +2143,15 @@ fn execute_builtin(cmd: &Command) {
             eprintlns("esh: source: filename argument required");
             shell().last_status = 1;
         } else {
-            shell().last_status = builtin_source(&cmd.args[1]);
+            // — ByteRiot: build argv Vec for the evaluator-based source builtin.
+            // Pass all args so positional params ($1, $2, ...) work in sourced scripts.
+            let mut argv: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec::Vec::new();
+            for i in 0..cmd.argc {
+                let arg = &cmd.args[i];
+                let len = arg.iter().position(|&b| b == 0).unwrap_or(arg.len());
+                argv.push(arg[..len].to_vec());
+            }
+            shell().last_status = crate::builtins::source_file(&argv, get_eval());
         }
     } else if bytes_eq(&cmd.args[0], b"read") {
         shell().last_status = builtin_read(cmd);
@@ -1705,6 +2365,9 @@ fn builtin_test(cmd: &Command) -> i32 {
 }
 
 /// Source a profile file silently (no error if file doesn't exist)
+/// — ByteRiot: now uses the AST pipeline. Reads the whole file,
+/// tokenizes it, parses the AST, and evaluates. Multi-line constructs
+/// (if/fi, for/done) work correctly because the parser sees the full token stream.
 fn source_profile(filename: &[u8]) {
     let path = bytes_to_str(filename);
     let fd = open2(path, O_RDONLY);
@@ -1712,45 +2375,30 @@ fn source_profile(filename: &[u8]) {
         return; // Silently ignore missing profile
     }
 
-    // Read and execute file line by line
+    // Read entire file
+    let mut content = alloc::vec::Vec::new();
     let mut buf = [0u8; 4096];
-    let mut line = [0u8; MAX_LINE];
-    let mut line_pos = 0;
-
     loop {
         let n = read(fd, &mut buf);
-        if n <= 0 {
-            break;
-        }
-
-        for i in 0..n as usize {
-            let c = buf[i];
-            if c == b'\n' {
-                line[line_pos] = 0;
-                if line_pos > 0 {
-                    let trimmed = trim(&line);
-                    if !trimmed.is_empty() && trimmed[0] != b'#' {
-                        execute_line(trimmed);
-                    }
-                }
-                line_pos = 0;
-            } else if line_pos < MAX_LINE - 1 {
-                line[line_pos] = c;
-                line_pos += 1;
-            }
-        }
+        if n <= 0 { break; }
+        content.extend_from_slice(&buf[..n as usize]);
     }
-
-    // Handle last line without newline
-    if line_pos > 0 {
-        line[line_pos] = 0;
-        let trimmed = trim(&line);
-        if !trimmed.is_empty() && trimmed[0] != b'#' {
-            execute_line(trimmed);
-        }
-    }
-
     close(fd);
+
+    if content.is_empty() { return; }
+
+    // Parse and evaluate through AST pipeline
+    let tokens = token::tokenize(&content);
+    match parser::parse(tokens) {
+        Ok(prog) => {
+            let ev = get_eval();
+            ev.eval_program(&prog);
+            shell().last_status = ev.last_status;
+        }
+        Err(_) => {
+            // Silently ignore parse errors in profile (like bash does for minor issues)
+        }
+    }
 }
 
 /// source / . builtin - execute commands from file
@@ -2755,10 +3403,13 @@ fn color_from_index(i: u8) -> Color {
 
 /// Execute an external command
 fn execute_external(cmd: &Command) {
-    // Reset interactive signal dispositions for child process.
-    // Shell ignores SIGINT itself; child must not inherit that.
+    // — ThreadRogue: reset all job-control signals to default for child.
+    // Shell ignores SIGINT/SIGTSTP/SIGTTIN/SIGTTOU; children must not.
     signal(SIGINT, SIG_DFL);
     signal(SIGQUIT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGTTIN, SIG_DFL);
+    signal(SIGTTOU, SIG_DFL);
 
     // Clear inherited blocked-signal mask in the child before exec.
     // If SIGINT remains blocked, Ctrl+C gets queued forever and commands

@@ -138,7 +138,9 @@ pub fn getenv(name: &str) -> Option<&'static str> {
 }
 
 /// Initialize default environment variables
-pub fn init_env() {
+/// — GraveShift: exported for crt0.o to call before main() in dynamically-linked binaries
+#[unsafe(no_mangle)]
+pub extern "C" fn init_env() {
     setenv("PATH", "/bin");
     setenv("HOME", "/");
     setenv("TERM", "vt100");

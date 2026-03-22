@@ -38,6 +38,8 @@ userspace-release:
 		echo "  Building $$pkg (release)..."; \
 		if [ "$$pkg" = "gwbasic" ]; then \
 			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1; \
+		elif [ "$$pkg" = "ld-oxide" ]; then \
+			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=pic -C link-arg=-Tuserspace/ld-oxide.ld -C link-arg=-e_start -C link-arg=--pie" cargo build --package ld-oxide --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 		else \
 			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 		fi; \
@@ -51,7 +53,7 @@ endif
 		$(MAKE) $$target || exit 1; \
 	done
 	@echo "Stripping binaries..."
-	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd resolvd journald journalctl soundd evtest argtest doom python $(COREUTILS_BINS); do \
+	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test dyntest dynlink-test ssh sshd rdpd service networkd resolvd journald journalctl soundd evtest argtest doom python ld-oxide as ld ar make $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \

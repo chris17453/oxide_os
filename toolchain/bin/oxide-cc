@@ -27,7 +27,7 @@ if ! command -v "$CLANG" &> /dev/null; then
     exit 1
 fi
 
-# Default flags for OXIDE target
+# Default flags for OXIDE target (static mode — overridden after arg parsing for -dynamic)
 OXIDE_CFLAGS=(
     "--target=x86_64-oxide-elf"
     "-fno-stack-protector"
@@ -52,6 +52,14 @@ OXIDE_LDFLAGS=(
 # Parse arguments
 LINK=true
 COMPILE_ONLY=false
+# — IronGhost: respect OXIDE_LINK_MODE env var from pkgmgr builder.
+# When set to "dynamic", oxide-cc defaults to dynamic linking mode
+# without needing -dynamic on every invocation.
+if [[ "${OXIDE_LINK_MODE:-}" == "dynamic" ]]; then
+    DYNAMIC=true
+else
+    DYNAMIC=false
+fi
 OUTPUT=""
 SOURCES=()
 USER_CFLAGS=()
@@ -108,8 +116,29 @@ while [[ $# -gt 0 ]]; do
             USER_CFLAGS+=("$1")
             shift
             ;;
+        -MT|-MF|-MQ|-isystem|-include|-iquote|-idirafter|-iprefix|-iwithprefix|-isysroot)
+            # — PulseForge: Flags that take a separate value argument.
+            # Without this, cmake's -MF/-MT args get eaten as source files.
+            USER_CFLAGS+=("$1" "$2")
+            shift 2
+            ;;
+        -MD|-MP|-MMD|-MM|-M)
+            # — PulseForge: Dependency generation flags (no value argument)
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        -dynamic)
+            # — IronGhost: link dynamically against libc.so via ld-oxide.so.1
+            DYNAMIC=true
+            shift
+            ;;
         -S|-E)
             LINK=false
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        --sysroot=*)
+            # — PulseForge: CMake passes --sysroot= which clang understands directly
             USER_CFLAGS+=("$1")
             shift
             ;;
@@ -163,6 +192,20 @@ EOF
     esac
 done
 
+# — IronGhost: override CFLAGS for dynamic mode (PIC required for PLT/GOT)
+if $DYNAMIC; then
+    OXIDE_CFLAGS=(
+        "--target=x86_64-oxide-elf"
+        "-fno-stack-protector"
+        "-fPIC"
+        "-mno-red-zone"
+        "-mcmodel=small"
+        "-nostdlib"
+        "-nostdinc"
+        "-isystem" "$SYSROOT/include"
+    )
+fi
+
 # Check if we have input files
 if [[ ${#SOURCES[@]} -eq 0 ]]; then
     echo "Error: no input files" >&2
@@ -180,20 +223,53 @@ if [[ -n "$OUTPUT" ]]; then
 fi
 
 if $LINK; then
-    CMD+=("${OXIDE_LDFLAGS[@]}")
-    CMD+=("${USER_LDFLAGS[@]}")
-    
-    # Link with libc (always, unless -nostdlib specified)
-    if [[ ! " ${USER_LDFLAGS[@]} " =~ " -nostdlib " ]]; then
-        # Check if libc.a exists
-        if [[ -f "$SYSROOT/lib/liboxide_libc.a" ]]; then
-            CMD+=("-loxide_libc")
-        else
-            echo "Warning: libc not found at $SYSROOT/lib/liboxide_libc.a" >&2
-            echo "  Build it with: make toolchain-libs" >&2
+    if $DYNAMIC; then
+        # — IronGhost: dynamic linking mode — use ld-oxide.so.1 as interpreter,
+        # link against libc.so instead of liboxide_libc.a. No custom linker script
+        # so LLD produces proper PT_DYNAMIC, .got.plt, DT_NEEDED etc.
+        # Base at 0x400000 to avoid collision with ld-oxide at 0x200000.
+        DYN_LDFLAGS=(
+            "-fuse-ld=lld"
+            "-Wl,-e,_start"
+            "-Wl,--gc-sections"
+            "-Wl,--dynamic-linker,/lib/ld-oxide.so.1"
+            "-Wl,--image-base=0x400000"
+            "-Wl,--allow-shlib-undefined"
+            "-Wl,--allow-multiple-definition"
+            "-L$SYSROOT/lib"
+        )
+        CMD+=("${DYN_LDFLAGS[@]}")
+        # — GraveShift: link crt0.o for _start — every dynamic C binary needs it.
+        # crt0.o provides _start which calls main() and exits. Without it, the
+        # entry point is 0 because libc.so's _start can't be resolved at link time.
+        if [[ -f "$SYSROOT/lib/crt0.o" ]] && [[ ! " ${USER_LDFLAGS[@]} " =~ " -nostdlib " ]]; then
+            CMD+=("$SYSROOT/lib/crt0.o")
+        fi
+        CMD+=("${USER_LDFLAGS[@]}")
+        # Link with shared libc
+        if [[ ! " ${USER_LDFLAGS[@]} " =~ " -nostdlib " ]]; then
+            if [[ -f "$SYSROOT/lib/libc.so" ]]; then
+                CMD+=("-lc")
+            else
+                echo "Warning: libc.so not found at $SYSROOT/lib/libc.so" >&2
+                echo "  Build it with: make toolchain" >&2
+            fi
+        fi
+    else
+        # Static linking (default)
+        CMD+=("${OXIDE_LDFLAGS[@]}")
+        CMD+=("${USER_LDFLAGS[@]}")
+        # Link with static libc
+        if [[ ! " ${USER_LDFLAGS[@]} " =~ " -nostdlib " ]]; then
+            if [[ -f "$SYSROOT/lib/liboxide_libc.a" ]]; then
+                CMD+=("-loxide_libc")
+            else
+                echo "Warning: libc not found at $SYSROOT/lib/liboxide_libc.a" >&2
+                echo "  Build it with: make toolchain-libs" >&2
+            fi
         fi
     fi
-    
+
     # Add user libraries
     CMD+=("${LIBS[@]}")
 fi

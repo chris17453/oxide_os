@@ -688,6 +688,190 @@ pub trait VirtualizationExt {
 // ARM uses PSCI/GIC, MIPS uses cop0/KSEG — none of them have APICs.
 // ============================================================================
 
+// ============================================================================
+// Exec Configuration — address space layout constants per architecture
+// — BlackLatch: every arch has different canonical address limits, stack
+// positions, and mmap regions. Hardcoding 0x7FFF_FFFF_0000 is x86_64 brain
+// damage. This trait makes the exec path arch-agnostic so porting to AArch64
+// doesn't mean grepping for magic hex in fifty files.
+// ============================================================================
+
+/// Address space layout constants for exec()
+///
+/// Each architecture defines where the user stack lives, where mmap starts,
+/// where TLS goes, and what the canonical address limit is.
+/// — BlackLatch
+pub trait ExecConfig {
+    /// Top of user stack (canonical upper limit before ASLR shift)
+    const USER_STACK_TOP: u64;
+
+    /// Default base address for mmap allocations (before ASLR jitter)
+    const MMAP_BASE_DEFAULT: u64;
+
+    /// TLS region base address (below mmap to prevent collisions)
+    const TLS_BASE: u64;
+
+    /// Upper limit for user-space addresses (anything above is kernel)
+    const USER_ADDR_LIMIT: u64;
+
+    /// ELF e_machine value for this architecture's executables
+    const ELF_MACHINE_EXEC: u16;
+}
+
+// ============================================================================
+// TLS Layout — Thread-Local Storage ABI variant per architecture
+// — GraveShift: x86_64 uses Variant II (TP points to end of TLS block,
+// data at negative offsets). AArch64 uses Variant I (TP points to start,
+// data at positive offsets). Get this wrong and every TLS access reads
+// from unmapped memory. Ask me how I know.
+// ============================================================================
+
+/// TLS ABI variant identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsVariant {
+    /// Variant I: TP points before TLS data (AArch64, MIPS)
+    /// Layout: [TCB][TLS data][TLS BSS]
+    /// Access: positive offsets from TP
+    VariantI,
+    /// Variant II: TP points after TLS data (x86_64)
+    /// Layout: [TLS data][TLS BSS][TCB]
+    /// Access: negative offsets from TP
+    VariantII,
+}
+
+/// Thread-Local Storage layout calculations per architecture
+///
+/// Handles the subtle differences between Variant I (AArch64/MIPS) and
+/// Variant II (x86_64) TLS ABIs.
+/// — GraveShift
+pub trait TlsLayout {
+    /// Which TLS variant this architecture uses
+    const VARIANT: TlsVariant;
+
+    /// Size of the Thread Control Block in bytes
+    const TCB_SIZE: usize;
+
+    /// Calculate the thread pointer value given a TLS allocation base.
+    ///
+    /// - `alloc_base`: start of the allocated TLS region
+    /// - `mem_size`: total TLS data+BSS size
+    ///
+    /// Returns the value to write to FS/TPIDR (the thread pointer register).
+    fn thread_pointer(alloc_base: u64, mem_size: usize) -> u64;
+
+    /// Calculate the offset from alloc_base where TLS init data should be copied.
+    ///
+    /// Variant I: data goes right after TCB → returns TCB_SIZE
+    /// Variant II: data starts at alloc_base → returns 0
+    fn tls_data_offset() -> usize;
+
+    /// Offset within TCB where the self-pointer lives (relative to TP).
+    /// x86_64: %fs:0 reads the self-pointer, so offset = 0
+    /// AArch64: TPIDR_EL0 IS the thread pointer, TCB self-ptr at offset 0
+    fn tcb_self_pointer_offset() -> usize;
+
+    /// Total allocation size for a TLS block (data + BSS + TCB)
+    fn total_alloc_size(mem_size: usize) -> usize {
+        mem_size + Self::TCB_SIZE
+    }
+}
+
+// ============================================================================
+// Process Context Operations — fresh context creation for exec
+// — SableWire: each arch has different register names, segment selectors,
+// and flag register layouts. x86_64 needs rflags=0x202, cs=0x23, ss=0x1B.
+// AArch64 needs SPSR_EL1 with EL0t mode bits. Abstract it or copy-paste it
+// forever across every exec/fork/clone path.
+// ============================================================================
+
+/// Process context creation and manipulation for exec/fork
+///
+/// Wraps the architecture-specific register layout so exec() doesn't need
+/// to know about rflags, cs/ss selectors, or SPSR mode bits.
+/// — SableWire
+pub trait ProcessContextOps {
+    /// The architecture-specific context type
+    type Context: Clone + Default + core::fmt::Debug;
+
+    /// Create a fresh user-mode context for exec.
+    ///
+    /// - `entry`: entry point address (RIP/PC)
+    /// - `sp`: initial stack pointer
+    /// - `tls_base`: FS/TPIDR value (0 if no TLS)
+    ///
+    /// Returns a context with:
+    /// - Interrupts enabled (IF=1 on x86, DAIF clear on ARM)
+    /// - User-mode segments/privileges
+    /// - All GP registers zeroed (clean slate per SysV ABI)
+    fn new_user_context(entry: u64, sp: u64, tls_base: u64) -> Self::Context;
+
+    /// Get the instruction pointer from context
+    fn get_ip(ctx: &Self::Context) -> u64;
+
+    /// Set the instruction pointer in context
+    fn set_ip(ctx: &mut Self::Context, ip: u64);
+
+    /// Get the stack pointer from context
+    fn get_sp(ctx: &Self::Context) -> u64;
+
+    /// Set the stack pointer in context
+    fn set_sp(ctx: &mut Self::Context, sp: u64);
+
+    /// Set the TLS base register (FS on x86, TPIDR on ARM)
+    fn set_tls_base(ctx: &mut Self::Context, tls_base: u64);
+}
+
+// ============================================================================
+// ELF Relocation — architecture-specific relocation application
+// — WireSaint: R_X86_64_RELATIVE and R_AARCH64_RELATIVE have the same
+// semantics (B+A) but different type numbers. The dl crate shouldn't need
+// a match arm for every arch. This trait dispatches relocation processing
+// through the arch layer.
+// ============================================================================
+
+/// ELF relocation application per architecture
+///
+/// Each architecture defines its own relocation type numbering and formulas.
+/// This trait lets the dynamic linker and module loader work without knowing
+/// which architecture's relocations they're processing.
+/// — WireSaint
+pub trait ElfRelocation {
+    /// Apply a single relocation.
+    ///
+    /// - `base`: load base address of the ELF object
+    /// - `offset`: relocation offset within the object
+    /// - `r_type_raw`: raw relocation type number from ELF
+    /// - `sym_value`: resolved symbol value (0 if none)
+    /// - `addend`: relocation addend (from RELA entry)
+    /// - `got`: GOT base address (0 if unknown)
+    ///
+    /// Returns Ok(()) on success, Err(msg) on unsupported/invalid relocation.
+    fn apply_relocation(
+        base: usize,
+        offset: u64,
+        r_type_raw: u32,
+        sym_value: usize,
+        addend: i64,
+        got: usize,
+    ) -> Result<(), &'static str>;
+
+    /// Check if a relocation type is R_*_NONE (no-op)
+    fn is_none_reloc(r_type: u32) -> bool;
+
+    /// Check if a relocation type is R_*_RELATIVE (B+A, no symbol)
+    fn is_relative_reloc(r_type: u32) -> bool;
+
+    /// Check if a relocation type is a GOT-related relocation
+    fn is_got_reloc(r_type: u32) -> bool;
+}
+
+// ============================================================================
+// SMP Operations
+// — NeonRoot: the INIT/SIPI sequence, APIC IPIs, TSC timing — all of that
+// belongs in the arch crate. Generic SMP code calls through this trait.
+// ARM uses PSCI/GIC, MIPS uses cop0/KSEG — none of them have APICs.
+// ============================================================================
+
 /// SMP hardware operations — everything the generic SMP layer needs from arch
 pub trait SmpOps {
     /// Get the current logical CPU ID

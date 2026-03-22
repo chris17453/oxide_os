@@ -108,7 +108,15 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
     unsafe {
         os_core::user_access_begin();
 
-        let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
+        // — EmberLock: User capability headers can be misaligned — read_volatile
+        // panics on that. copy_nonoverlapping reads bytes, not assumptions.
+        let mut hdr = core::mem::MaybeUninit::<CapUserHeader>::uninit();
+        core::ptr::copy_nonoverlapping(
+            hdrp as *const u8,
+            hdr.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<CapUserHeader>(),
+        );
+        let hdr = hdr.assume_init();
 
         // Check version
         if hdr.version != LINUX_CAPABILITY_VERSION_3 {
@@ -123,7 +131,12 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
                 permitted: 0xFFFFFFFF,
                 inheritable: 0,
             };
-            core::ptr::write_volatile(datap as *mut CapUserData, data);
+            // — EmberLock: Alignment-safe write to user capability data buffer.
+            core::ptr::copy_nonoverlapping(
+                &data as *const CapUserData as *const u8,
+                datap as *mut u8,
+                core::mem::size_of::<CapUserData>(),
+            );
         }
 
         os_core::user_access_end();
@@ -149,8 +162,16 @@ pub fn sys_capset(hdrp: u64, _datap: u64) -> i64 {
     }
 
     unsafe {
+        // — EmberLock: capset header read — same alignment-safe byte copy.
+        // Misaligned read_volatile is a kernel panic waiting to happen.
         os_core::user_access_begin();
-        let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
+        let mut hdr_uninit = core::mem::MaybeUninit::<CapUserHeader>::uninit();
+        core::ptr::copy_nonoverlapping(
+            hdrp as *const u8,
+            hdr_uninit.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<CapUserHeader>(),
+        );
+        let hdr = hdr_uninit.assume_init();
         os_core::user_access_end();
 
         // Check version

@@ -86,10 +86,10 @@ INITRAMFS_PREREQ :=
 endif
 
 # Userspace packages to build (Cargo-based)
-USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd resolvd sntpd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
+USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd resolvd sntpd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo ld-oxide su oxide-as oxide-ld oxide-ar oxide-make
 USERSPACE_PACKAGES ?= $(USERSPACE_ALL_PACKAGES)
 # Non-Cargo extra targets (built via dedicated rules)
-USERSPACE_EXTRA_TARGETS_ALL := tls-test thread-test
+USERSPACE_EXTRA_TARGETS_ALL := tls-test thread-test dyntest dynlink-test dynlink-ncurses-test dynlink-suite mmap-write-test shm-test shm-fork-test ipc-suite
 USERSPACE_EXTRA_TARGETS ?= $(USERSPACE_EXTRA_TARGETS_ALL)
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
@@ -112,18 +112,19 @@ SERIAL_LOG := $(TARGET_DIR)/serial.log
 BUILD_ARCHIVE_DIR = BUILD/$(OXIDE_BUILD)
 
 # Disk image configuration for root filesystem
+# — PatchBay: 256MB boot (fits 4+ kernel archives), 512MB root, 128MB home
 ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img
-ROOTFS_SIZE := 896
-BOOT_SIZE := 128
-ROOT_SIZE := 384
-HOME_SIZE := 64
+ROOTFS_SIZE := 1024
+BOOT_SIZE := 256
+ROOT_SIZE := 512
+HOME_SIZE := 128
 BOOT_START := 1
-ROOT_START := 129
-HOME_START := 513
+ROOT_START := 257
+HOME_START := 769
 
 # — PatchBay: kernel archive — accumulates builds so the boot manager can offer rollback
 KERNEL_ARCHIVE := build/kernels
-MAX_KERNEL_ARCHIVE := 2
+MAX_KERNEL_ARCHIVE := 1
 
 # Toolchain install prefix
 INSTALL_PREFIX ?= /usr/local/oxide

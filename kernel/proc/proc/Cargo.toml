@@ -8,8 +8,11 @@ debug-fork = []
 debug-paging = ["mm-paging/debug-paging"]  # Enable page alloc/zero traces during exec (EXTREMELY noisy — fires on every page)
 debug-proc = []  # Enable process lifecycle debug traces (frame alloc/free, Drop paths)
 debug-vma = ["mm-vma/debug-vma"]  # Enable VMA insert/remove traces
+arch-x86_64 = ["dep:arch-x86_64"]  # Enable x86_64 arch constants for exec layout
 
 [dependencies]
+arch-traits = { workspace = true }
+arch-x86_64 = { workspace = true, optional = true }
 os_core = { path = "../../core/os_core" }
 os_log = { path = "../../core/os_log" }
 proc-traits = { path = "../proc-traits" }

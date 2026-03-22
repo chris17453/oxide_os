@@ -197,10 +197,14 @@ pub fn setup_signal_handler(
         saved_r15: regs.r15,
     };
 
-    // Calculate new stack pointer (frame goes below current RSP)
-    // Align to 16 bytes as required by x86_64 ABI
+    // — GraveShift: Calculate new stack pointer with correct x86_64 ABI alignment.
+    // The ABI requires (RSP + 8) % 16 == 0 at function entry — simulating the state
+    // after a `call` instruction pushed the 8-byte return address onto a 16-byte
+    // aligned stack. The old code did `& !0xF` which gave RSP % 16 == 0 (wrong).
+    // Linux does `round_down(sp, 16) - 8`. Same thing here. Without this, any signal
+    // handler that uses SSE/AVX instructions gets an alignment fault. — GraveShift
     let frame_size = core::mem::size_of::<SignalFrame>() as u64;
-    let new_rsp = (current_rsp - frame_size) & !0xF;
+    let new_rsp = ((current_rsp - frame_size) & !0xF) - 8;
 
     // New RIP is the handler address
     let new_rip = handler;

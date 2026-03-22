@@ -186,11 +186,17 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
     let fds: &mut [PollFd] = if nfds <= STACK_LIMIT {
         // — TorqueJax: Zero-alloc path. Initialize from userspace directly
         // into stack memory. No heap, no allocator lock, no fragmentation.
+        // — TorqueJax: User pollfd arrays can land on any alignment. read_volatile
+        // panics on misaligned pointers — copy_nonoverlapping doesn't blink.
         unsafe {
             os_core::user_access_begin();
-            let ptr = fds_ptr as *const PollFd;
             for i in 0..nfds {
-                stack_buf[i].write(core::ptr::read_volatile(ptr.add(i)));
+                let src = (fds_ptr + i * core::mem::size_of::<PollFd>()) as *const u8;
+                core::ptr::copy_nonoverlapping(
+                    src,
+                    stack_buf[i].as_mut_ptr() as *mut u8,
+                    core::mem::size_of::<PollFd>(),
+                );
             }
             os_core::user_access_end();
             // — WireSaint: Safe because we just initialized [0..nfds] above.
@@ -203,11 +209,19 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         // — TorqueJax: Heap fallback for the heavy hitters. >64 fds means
         // you're running an event loop server — you can afford one alloc.
         heap_buf = Vec::with_capacity(nfds);
+        // — TorqueJax: Heap path gets the same alignment-safe treatment.
+        // User pointers are feral — treat them like it.
         unsafe {
             os_core::user_access_begin();
-            let ptr = fds_ptr as *const PollFd;
             for i in 0..nfds {
-                heap_buf.push(core::ptr::read_volatile(ptr.add(i)));
+                let mut tmp = core::mem::MaybeUninit::<PollFd>::uninit();
+                let src = (fds_ptr + i * core::mem::size_of::<PollFd>()) as *const u8;
+                core::ptr::copy_nonoverlapping(
+                    src,
+                    tmp.as_mut_ptr() as *mut u8,
+                    core::mem::size_of::<PollFd>(),
+                );
+                heap_buf.push(tmp.assume_init());
             }
             os_core::user_access_end();
         }
@@ -342,11 +356,17 @@ fn check_all_pollfds(fds: &mut [PollFd]) -> i64 {
 
 /// Write pollfd results back to userspace.
 fn write_pollfds_back(fds_ptr: usize, fds: &[PollFd]) {
+    // — WireSaint: Writing poll results back to user memory. Misaligned
+    // write_volatile is a death sentence — copy_nonoverlapping is the pardon.
     unsafe {
         os_core::user_access_begin();
-        let ptr = fds_ptr as *mut PollFd;
         for (i, pollfd) in fds.iter().enumerate() {
-            core::ptr::write_volatile(ptr.add(i), *pollfd);
+            let dest = (fds_ptr + i * core::mem::size_of::<PollFd>()) as *mut u8;
+            core::ptr::copy_nonoverlapping(
+                pollfd as *const PollFd as *const u8,
+                dest,
+                core::mem::size_of::<PollFd>(),
+            );
         }
         os_core::user_access_end();
     }
@@ -357,12 +377,18 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
     let timeout_ms = if timeout_ptr == 0 {
         -1
     } else {
+        // — GraveShift: Timespec from user stack — alignment unknown.
+        // copy_nonoverlapping reads it byte-clean, no questions asked.
         let ts: Timespec = unsafe {
             os_core::user_access_begin();
-            let tp = timeout_ptr as *const Timespec;
-            let val = core::ptr::read_volatile(tp);
+            let mut val = core::mem::MaybeUninit::<Timespec>::uninit();
+            core::ptr::copy_nonoverlapping(
+                timeout_ptr as *const u8,
+                val.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<Timespec>(),
+            );
             os_core::user_access_end();
-            val
+            val.assume_init()
         };
 
         if ts.tv_sec < 0 || ts.tv_nsec < 0 {
@@ -466,16 +492,30 @@ pub fn sys_select(
     let mut writefds = FdSet::new();
     let mut exceptfds = FdSet::new();
 
+    // — SableWire: FdSet reads from user pointers — alignment is a pipe dream.
+    // copy_nonoverlapping handles the reality of misaligned user buffers.
     unsafe {
         os_core::user_access_begin();
         if readfds_ptr != 0 {
-            readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                readfds_ptr as *const u8,
+                &mut readfds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if writefds_ptr != 0 {
-            writefds = core::ptr::read_volatile(writefds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                writefds_ptr as *const u8,
+                &mut writefds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if exceptfds_ptr != 0 {
-            exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                exceptfds_ptr as *const u8,
+                &mut exceptfds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         os_core::user_access_end();
     }
@@ -486,7 +526,14 @@ pub fn sys_select(
     } else {
         unsafe {
             os_core::user_access_begin();
-            let tv = core::ptr::read_volatile(timeout_ptr as *const time::Timeval);
+            // — SableWire: Timeval from user memory — same alignment paranoia applies.
+            let mut tv = core::mem::MaybeUninit::<time::Timeval>::uninit();
+            core::ptr::copy_nonoverlapping(
+                timeout_ptr as *const u8,
+                tv.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<time::Timeval>(),
+            );
+            let tv = tv.assume_init();
             os_core::user_access_end();
 
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
@@ -655,16 +702,30 @@ fn write_select_back(
     result_write: &FdSet,
     result_except: &FdSet,
 ) {
+    // — WireSaint: Writing FdSet results back to user memory. Misaligned
+    // user buffers + write_volatile = alignment panic. Byte-copy or bust.
     unsafe {
         os_core::user_access_begin();
         if readfds_ptr != 0 {
-            core::ptr::write_volatile(readfds_ptr as *mut FdSet, *result_read);
+            core::ptr::copy_nonoverlapping(
+                result_read as *const FdSet as *const u8,
+                readfds_ptr as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if writefds_ptr != 0 {
-            core::ptr::write_volatile(writefds_ptr as *mut FdSet, *result_write);
+            core::ptr::copy_nonoverlapping(
+                result_write as *const FdSet as *const u8,
+                writefds_ptr as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if exceptfds_ptr != 0 {
-            core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, *result_except);
+            core::ptr::copy_nonoverlapping(
+                result_except as *const FdSet as *const u8,
+                exceptfds_ptr as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         os_core::user_access_end();
     }
@@ -696,12 +757,18 @@ pub fn sys_pselect6(
         return ret;
     }
 
+    // — GraveShift: pselect6 timespec from user memory — same alignment-safe
+    // treatment as everywhere else. copy_nonoverlapping is our religion now.
     let ts: Timespec = unsafe {
         os_core::user_access_begin();
-        let tp = timeout_ptr as *const Timespec;
-        let val = core::ptr::read_volatile(tp);
+        let mut val = core::mem::MaybeUninit::<Timespec>::uninit();
+        core::ptr::copy_nonoverlapping(
+            timeout_ptr as *const u8,
+            val.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<Timespec>(),
+        );
         os_core::user_access_end();
-        val
+        val.assume_init()
     };
 
     let timeout_ms = if ts.tv_sec < 0 {
@@ -731,16 +798,30 @@ pub fn sys_pselect6(
     let mut writefds = FdSet::new();
     let mut exceptfds = FdSet::new();
 
+    // — SableWire: pselect6 fd_set reads — same alignment-paranoid byte copy.
+    // If you think user pointers are aligned, you haven't been debugging long enough.
     unsafe {
         os_core::user_access_begin();
         if readfds_ptr != 0 {
-            readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                readfds_ptr as *const u8,
+                &mut readfds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if writefds_ptr != 0 {
-            writefds = core::ptr::read_volatile(writefds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                writefds_ptr as *const u8,
+                &mut writefds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         if exceptfds_ptr != 0 {
-            exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
+            core::ptr::copy_nonoverlapping(
+                exceptfds_ptr as *const u8,
+                &mut exceptfds as *mut FdSet as *mut u8,
+                core::mem::size_of::<FdSet>(),
+            );
         }
         os_core::user_access_end();
     }

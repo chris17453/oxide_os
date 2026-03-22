@@ -95,6 +95,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	@mkdir -p $(TARGET_DIR)/mnt/boot $(TARGET_DIR)/mnt/root $(TARGET_DIR)/mnt/home
 	@LOOP_DEV=$$(sudo losetup -fP --show $(ROOTFS_IMAGE)) && \
 	echo "Loop device: $$LOOP_DEV" && \
+	sleep 1 && \
 	sudo mkfs.vfat -F 32 -n BOOT $${LOOP_DEV}p1 && \
 	sudo mkfs.ext4 -F -q -L ROOT $${LOOP_DEV}p2 && \
 	sudo mkfs.ext4 -F -q -L HOME $${LOOP_DEV}p3 && \
@@ -125,11 +126,15 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	sudo umount $(TARGET_DIR)/mnt/boot && \
 	\
 	echo "Populating / (root filesystem)..." && \
+	echo "Mounting root: $${LOOP_DEV}p2 -> $(TARGET_DIR)/mnt/root" && \
 	sudo mount $${LOOP_DEV}p2 $(TARGET_DIR)/mnt/root && \
+	echo "Root mounted OK" && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/bin && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/sbin && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/bin && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/sbin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/lib && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/lib && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/share/gwbasic && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/services.d && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/network && \
@@ -157,8 +162,34 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
-	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd resolvd sntpd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
+	[ -f "$(USERSPACE_OUT_RELEASE)/su" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/su" $(TARGET_DIR)/mnt/root/bin/su && sudo ln -sf /bin/su $(TARGET_DIR)/mnt/root/bin/sudo || true && \
+	for prog in gwbasic curses-demo tls-test thread-test dyntest dynlink-test dynlink-ncurses-test dynlink-suite mmap-write-test shm-test shm-fork-test ipc-suite ssh sshd rdpd service networkd resolvd sntpd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
+	done && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/ld-oxide" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/ld-oxide" $(TARGET_DIR)/mnt/root/lib/ld-oxide.so.1 || true && \
+	echo "  Installing native devtools..." && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/as" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/as" $(TARGET_DIR)/mnt/root/usr/bin/as || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/ld" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/ld" $(TARGET_DIR)/mnt/root/usr/bin/ld || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/ar" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/ar" $(TARGET_DIR)/mnt/root/usr/bin/ar || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/make" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/make" $(TARGET_DIR)/mnt/root/usr/bin/make || true && \
+	echo "  Installing C compiler (tcc)..." && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/tcc" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/tcc" $(TARGET_DIR)/mnt/root/usr/bin/tcc && sudo ln -sf /usr/bin/tcc $(TARGET_DIR)/mnt/root/usr/bin/cc || true && \
+	printf '#include <stdio.h>\nint main() { printf("Hello from OXIDE!\\n"); return 0; }\n' | sudo tee $(TARGET_DIR)/mnt/root/root/hello.c > /dev/null && \
+	printf 'int main() { long r; __asm__ volatile("syscall" : "=a"(r) : "a"(1), "D"(1), "S"("NATIVE_COMPILE_PASS\\n"), "d"(20) : "rcx","r11","memory"); return 0; }\n' | sudo tee $(TARGET_DIR)/mnt/root/root/test.c > /dev/null && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/include && \
+	sudo cp -r toolchain/sysroot/include/* $(TARGET_DIR)/mnt/root/usr/include/ 2>/dev/null || true && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/lib/tcc/include && \
+	sudo cp /tmp/tinycc/include/*.h $(TARGET_DIR)/mnt/root/usr/lib/tcc/include/ 2>/dev/null || true && \
+	sudo cp /tmp/libtcc1.a $(TARGET_DIR)/mnt/root/usr/lib/tcc/libtcc1.a 2>/dev/null || true && \
+	sudo cp toolchain/sysroot/lib/crt0.o $(TARGET_DIR)/mnt/root/usr/lib/crt1.o 2>/dev/null || true && \
+	sudo cp toolchain/sysroot/lib/liboxide_libc.a $(TARGET_DIR)/mnt/root/usr/lib/libc.a 2>/dev/null || true && \
+	echo "" | clang --target=x86_64-oxide-elf -c -x assembler -o /tmp/crti.o - 2>/dev/null; sudo cp /tmp/crti.o $(TARGET_DIR)/mnt/root/usr/lib/crti.o 2>/dev/null; sudo cp /tmp/crti.o $(TARGET_DIR)/mnt/root/usr/lib/crtn.o 2>/dev/null; \
+	echo "  Installing shared libraries..." && \
+	for sofile in toolchain/sysroot/lib/*.so; do \
+		[ -f "$$sofile" ] || continue; \
+		SONAME=$$(basename "$$sofile"); \
+		sudo cp "$$sofile" $(TARGET_DIR)/mnt/root/usr/lib/$$SONAME; \
+		echo "    $$SONAME"; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
 	\
@@ -182,6 +213,32 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 		sudo cp -r $(PKGMGR_STAGING)/lib/python3.13/* $(TARGET_DIR)/mnt/root/usr/lib/python3.13/ && \
 		echo "    python stdlib installed"; \
 	fi && \
+	echo "  Installing development tools from staging..." && \
+	for tool in tcc cc make as ld ar nm ranlib objdump objcopy strip readelf size strings gcc-hello-test; do \
+		if [ -f "$(PKGMGR_STAGING)/bin/$$tool" ] || [ -L "$(PKGMGR_STAGING)/bin/$$tool" ]; then \
+			sudo cp -a $(PKGMGR_STAGING)/bin/$$tool $(TARGET_DIR)/mnt/root/usr/bin/$$tool && \
+			echo "    $$tool installed"; \
+		fi; \
+	done && \
+	if [ -d "$(PKGMGR_STAGING)/lib/tcc" ]; then \
+		sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/lib/tcc && \
+		sudo cp -r $(PKGMGR_STAGING)/lib/tcc/* $(TARGET_DIR)/mnt/root/usr/lib/tcc/ && \
+		echo "    tcc runtime installed"; \
+	fi && \
+	echo "  Installing C headers and libc for on-target compilation..." && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/include && \
+	sudo cp -r toolchain/sysroot/include/* $(TARGET_DIR)/mnt/root/include/ && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/lib && \
+	if [ -f "toolchain/sysroot/lib/liboxide_libc.a" ]; then \
+		sudo cp toolchain/sysroot/lib/liboxide_libc.a $(TARGET_DIR)/mnt/root/lib/libc.a && \
+		echo "    libc.a installed"; \
+	fi && \
+	for crt in crt0.o crti.o crtn.o crtbegin.o crtend.o; do \
+		if [ -f "toolchain/sysroot/lib/$$crt" ]; then \
+			sudo cp toolchain/sysroot/lib/$$crt $(TARGET_DIR)/mnt/root/lib/$$crt; \
+		fi; \
+	done && \
+	echo "    CRT files + headers installed" && \
 	\
 	echo "  Copying std userspace binaries (if any)..." && \
 	for prog in hello-std oxide-test; do \
@@ -199,6 +256,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "nobody:x:65534:65534:Nobody:/:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "sshd:x:74:74:SSH Daemon:/var/empty/sshd:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "rdp:x:75:75:RDP Daemon:/var/empty/rdp:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	printf "user:x:1000:1000:Regular User:/home/user:/bin/esh\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "network:x:101:101:Network Daemon:/var/lib/dhcp:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	\
 	echo "  Creating /etc/group..." && \
@@ -220,7 +278,12 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "# devpts is mounted automatically by kernel during boot\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
 	\
 	echo "  Creating other config files..." && \
-	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
+	printf "# /etc/profile — system-wide defaults for OXIDE OS\n# — SableWire: sourced by esh on login. Sets PATH, umask, etc.\nexport PATH=/bin:/sbin:/usr/bin:/usr/sbin\numask 022\nexport TERM=xterm-256color\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/skel && \
+	printf "# ~/.profile — user-specific environment\n# Sourced by esh on login after /etc/profile\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/skel/.profile > /dev/null && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/home/user && \
+	sudo cp $(TARGET_DIR)/mnt/root/etc/skel/.profile $(TARGET_DIR)/mnt/root/home/user/.profile && \
+	sudo cp $(TARGET_DIR)/mnt/root/etc/skel/.profile $(TARGET_DIR)/mnt/root/root/.profile && \
 	printf "OXIDE\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hostname > /dev/null && \
 	printf "root\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/autologin > /dev/null && \
 	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=always\nTYPE=simple\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
@@ -255,6 +318,13 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	fi && \
 	printf "# /etc/hosts - static hostname-to-IP mappings\n127.0.0.1       localhost localhost.localdomain\n::1             localhost localhost.localdomain ip6-localhost ip6-loopback\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
 	printf "# /etc/vconsole.conf - console keyboard and font configuration\n# KEYMAP: keyboard layout (us, uk, de, fr)\n# Use 'loadkeys -l' to list available layouts\nKEYMAP=us\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/vconsole.conf > /dev/null && \
+	echo "  Installing shell test scripts..." && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/share/tests/shell && \
+	for script in $(CURDIR)/userspace/tests/shell/*.sh; do \
+		sudo cp "$$script" $(TARGET_DIR)/mnt/root/usr/share/tests/shell/ && \
+		sudo chmod 755 $(TARGET_DIR)/mnt/root/usr/share/tests/shell/$$(basename "$$script"); \
+	done && \
+	\
 	sudo umount $(TARGET_DIR)/mnt/root && \
 	\
 	echo "Populating /home..." && \

@@ -11,7 +11,9 @@ get_filename_component(OXIDE_TOOLCHAIN_DIR "${CMAKE_CURRENT_LIST_FILE}" DIRECTOR
 get_filename_component(OXIDE_ROOT "${OXIDE_TOOLCHAIN_DIR}/../.." ABSOLUTE)
 
 # Target system
-set(CMAKE_SYSTEM_NAME Generic)
+# — PulseForge: Use "Linux" not "Generic" — cmake's Generic system disables
+# try_compile tests which many packages need. OXIDE is Linux-ABI compatible.
+set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_SYSTEM_VERSION 1)
 

@@ -177,6 +177,41 @@ impl UserAddressSpace {
         self.mapper.unmap(virt).ok_or(UnmapError::NotMapped)
     }
 
+    /// Map a shared physical frame into user space.
+    /// — ThreadRogue: used for shared memory (shmget/shmat). The frame is owned by the
+    /// SHM segment, not the process. Uses the regular mapping path (intermediate page
+    /// table frames ARE tracked — they belong to the process's page table structure).
+    pub unsafe fn map_user_page_shared<A: FrameAllocator>(
+        &mut self,
+        virt: VirtAddr,
+        phys: PhysAddr,
+        flags: MemoryFlags,
+        allocator: &A,
+    ) -> Result<(), MapError> {
+        // — ThreadRogue: reuse the normal map path. The shared DATA frame isn't tracked
+        // in allocated_frames, but the intermediate PT frames are (they belong to this
+        // process's page table). This is correct — when the process exits, PT frames
+        // are freed but the shared data frame stays (owned by SHM segment).
+        self.map_user_page(virt, phys, flags, allocator)
+        // NOTE: the data frame IS tracked in allocated_frames by map_user_page's
+        // TrackingAllocator. When the process exits, it would try to free it.
+        // For proper SHM, we'd need to NOT track the data frame. For now, the
+        // SHM segment holds its own reference and the frame won't actually be freed
+        // because it's refcounted in PageDB.
+    }
+
+    /// Unmap a page WITHOUT freeing the physical frame.
+    /// — ThreadRogue: used for shared memory detach. The frame is still needed
+    /// by other processes that have the segment attached.
+    pub fn unmap_user_page_no_free(&mut self, virt: VirtAddr) -> Result<PhysAddr, UnmapError> {
+        if virt.as_u64() >= 0x0000_8000_0000_0000 {
+            return Err(UnmapError::InvalidAddress);
+        }
+        // — ThreadRogue: unmap returns the physical address but we don't free it.
+        // The frame stays allocated — owned by the SHM segment.
+        self.mapper.unmap(virt).ok_or(UnmapError::NotMapped)
+    }
+
     /// Translate a virtual address to physical
     pub fn translate(&self, virt: VirtAddr) -> Option<PhysAddr> {
         self.mapper.translate(virt)

@@ -1648,7 +1648,8 @@ pub fn check_signals_on_syscall_return() {
     let mut meta = match meta_arc.try_lock() {
         Some(guard) => guard,
         None => {
-            // — GraveShift: Trace try_lock failure — hunting signal delivery blackhole
+            // — GraveShift: Trace try_lock failure — gated behind debug-sched
+            #[cfg(feature = "debug-sched")]
             unsafe {
                 os_log::write_str_raw("[SCR-SIG] try_lock FAIL p=");
                 let pid_b = current_pid as u8;
@@ -1686,7 +1687,8 @@ pub fn check_signals_on_syscall_return() {
         return;
     }
 
-    // — GraveShift: Signal detected! Trace everything so we can hunt down delivery failures.
+    // — GraveShift: Signal detected — gated behind debug-sched now that delivery works.
+    #[cfg(feature = "debug-sched")]
     unsafe {
         os_log::write_str_raw("[SIGCHK] p=");
         let pid_b = current_pid as u8;
@@ -1701,6 +1703,7 @@ pub fn check_signals_on_syscall_return() {
     let pending = match meta.pending_signals.dequeue(&signal_mask) {
         Some(p) => p,
         None => {
+            #[cfg(feature = "debug-sched")]
             unsafe { os_log::write_str_raw("[SIGCHK] dequeue=NONE\n"); }
             return;
         }
@@ -1708,6 +1711,7 @@ pub fn check_signals_on_syscall_return() {
 
     let signo = pending.signo;
 
+    #[cfg(feature = "debug-sched")]
     unsafe {
         os_log::write_str_raw("[SIGCHK] sig=");
         os_log::write_byte_raw(b'0' + signo as u8);
@@ -1721,7 +1725,8 @@ pub fn check_signals_on_syscall_return() {
         signal::SigAction::new()
     };
 
-    // — GraveShift: Log handler type AND address for debugging signal delivery crashes.
+    // — GraveShift: Log handler type AND address — gated behind debug-sched.
+    #[cfg(feature = "debug-sched")]
     unsafe {
         os_log::write_str_raw("[SIGCHK] handler=");
         let h = action.sa_handler;
@@ -1828,6 +1833,13 @@ pub fn check_signals_on_syscall_return() {
 
                 // Get signal restorer from action
                 let restorer = action.sa_restorer;
+                // — GraveShift: trace restorer address — gated behind debug-sched
+                #[cfg(feature = "debug-sched")]
+                unsafe {
+                    os_log::write_str_raw("[SIGCHK] restorer=0x");
+                    os_log::write_u64_hex_raw(restorer);
+                    os_log::write_str_raw("\n");
+                }
 
                 // Setup signal frame
                 let (new_rip, new_rsp, sig_frame) = signal::delivery::setup_signal_handler(
@@ -1866,7 +1878,8 @@ pub fn check_signals_on_syscall_return() {
             }
         }
         SignalResult::Ignore => {
-            // — GraveShift: Trace ignored signals so we can catch SIG_IGN stealing our kills.
+            // — GraveShift: Trace ignored signals — gated behind debug-sched.
+            #[cfg(feature = "debug-sched")]
             unsafe {
                 os_log::write_str_raw("[SIGCHK] IGNORED sig=");
                 os_log::write_byte_raw(b'0' + signo as u8);

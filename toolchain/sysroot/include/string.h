@@ -45,6 +45,20 @@ int strerror_r(int errnum, char *buf, size_t buflen);
 /* String duplication */
 char *strndup(const char *s, size_t n);
 
-#endif /* _STRING_H */
-
+/* Locale-aware comparison */
 int strcoll(const char *s1, const char *s2);
+size_t strxfrm(char *dest, const char *src, size_t n);
+
+/* Case-insensitive comparison (POSIX, also in strings.h) */
+int strcasecmp(const char *s1, const char *s2);
+int strncasecmp(const char *s1, const char *s2, size_t n);
+
+/* Bit operations (POSIX, also in strings.h) */
+int ffs(int i);
+int ffsl(long i);
+int ffsll(long long i);
+
+/* GNU extension */
+void *memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen);
+
+#endif /* _STRING_H */

@@ -18,11 +18,14 @@ pub mod ap_boot;
 pub mod apic;
 pub mod context;
 pub mod exceptions;
+pub mod exec_config;
 pub mod gdt;
 pub mod idt;
 pub mod serial;
 pub mod syscall;
 pub mod usermode;
+
+pub use exec_config::X86_64ProcessContext;
 
 /// Return the current hardware CPU identifier (APIC ID on x86_64)
 pub fn cpu_id() -> Option<u32> {

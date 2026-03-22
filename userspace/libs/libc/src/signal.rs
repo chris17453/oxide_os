@@ -118,17 +118,21 @@ pub fn raise(sig: i32) -> i32 {
 /// — GraveShift: Without this, returning from a handler jumps to address 0 and the process
 /// triple-faults into the void. This tiny function calls SYS_SIGRETURN to restore the
 /// pre-signal register state from the SignalFrame on the stack.
+///
+/// — GraveShift: MUST be naked. The old non-naked version generated a prologue (push rbp)
+/// which shifted RSP by 8 before the syscall instruction. sys_sigreturn computes
+/// frame_ptr = user_rsp - 8, but with the prologue RSP was already decremented, so it read
+/// 8 bytes BEFORE the actual SignalFrame — saved_rip was garbage, usually 0x0.
+/// Every signal handler "returned" to address 0. Every Ctrl+C killed the shell.
+/// The fix is 4 characters: naked. The debugging was 4 hours. Classic. — GraveShift
+#[unsafe(naked)]
 #[unsafe(no_mangle)]
-#[inline(never)]
 pub unsafe extern "C" fn __oxide_sigreturn() {
-    unsafe {
-        core::arch::asm!(
-            "mov rax, {nr}",
-            "syscall",
-            nr = const crate::syscall::nr::SIGRETURN,
-            options(noreturn),
-        );
-    }
+    core::arch::naked_asm!(
+        "mov rax, {nr}",
+        "syscall",
+        nr = const crate::syscall::nr::SIGRETURN,
+    );
 }
 
 /// Set signal handler (simple interface)

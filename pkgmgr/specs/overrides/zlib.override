@@ -1,0 +1,21 @@
+# zlib-ng Build Override for OXIDE OS (provides zlib-compatible API)
+# — PulseForge: "The compression library everything depends on. Fedora 42
+# ships zlib-ng as the zlib replacement. We build it in compat mode so
+# everything that links -lz just works."
+#
+# zlib-ng uses CMake with a ZLIB_COMPAT option.
+
+BUILD_SYSTEM="cmake"
+
+CONFIGURE_FLAGS="
+  -DZLIB_COMPAT=ON
+  -DZLIB_ENABLE_TESTS=OFF
+  -DWITH_GTEST=OFF
+  -DWITH_FUZZERS=OFF
+  -DWITH_BENCHMARKS=OFF
+  -DWITH_OPTIM=ON
+  -DWITH_NEW_STRATEGIES=ON
+  -DCMAKE_INSTALL_LIBDIR=lib
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS -fPIC"

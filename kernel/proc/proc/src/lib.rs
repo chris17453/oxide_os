@@ -19,7 +19,7 @@ mod address_space;
 mod clone;
 mod exec;
 mod fork;
-mod futex;
+pub mod futex;
 mod meta;
 mod process;
 mod wait;
@@ -30,8 +30,9 @@ pub use exec::{ExecError, ExecResult, do_exec};
 pub use fork::{ForkError, ForkResult, do_fork, handle_cow_fault};
 pub use futex::{
     FutexError, FutexWaitResult, futex_clear_and_wake, futex_wait_cancel, futex_wait_prepare,
-    futex_wake,
+    futex_wake, futex_wait_bitset_prepare, futex_wake_bitset, futex_requeue, futex_cmp_requeue,
 };
+pub use futex::futex_op;
 pub use meta::ProcessMeta;
 pub use proc_traits::{AddressSpace, MapError, MemoryFlags, Pid, ProcessState, UnmapError};
 pub use process::{Credentials, ProcessContext, Tid, alloc_pid, clone_flags};

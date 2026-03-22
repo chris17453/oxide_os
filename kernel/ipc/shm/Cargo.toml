@@ -1,0 +1,13 @@
+[package]
+name = "shm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+os_core = { workspace = true }
+os_log = { workspace = true }
+mm-traits = { path = "../../mm/mm-traits" }
+mm-paging = { path = "../../mm/mm-paging" }
+mm-pagedb = { path = "../../mm/mm-pagedb" }
+spin = { workspace = true }

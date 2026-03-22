@@ -83,6 +83,23 @@ pub mod nr {
     // Scheduler / yield (24)
     pub const SCHED_YIELD: u64 = 24;
 
+    // System V IPC — Shared Memory (29-31, 67)
+    pub const SHMGET: u64 = 29;
+    pub const SHMAT: u64 = 30;
+    pub const SHMCTL: u64 = 31;
+    pub const SHMDT: u64 = 67;
+
+    // System V IPC — Semaphores (64-66)
+    pub const SEMGET: u64 = 64;
+    pub const SEMOP: u64 = 65;
+    pub const SEMCTL: u64 = 66;
+
+    // System V IPC — Message Queues (68-71)
+    pub const MSGGET: u64 = 68;
+    pub const MSGSND: u64 = 69;
+    pub const MSGRCV: u64 = 70;
+    pub const MSGCTL: u64 = 71;
+
     // Sendfile (40)
     pub const SENDFILE: u64 = 40;
 
@@ -406,6 +423,69 @@ pub fn sys_getppid() -> i32 {
 pub fn sys_sched_yield() -> i32 {
     syscall0(nr::SCHED_YIELD) as i32
 }
+
+// ============ System V Shared Memory ============
+
+/// shmget - Get or create a shared memory segment
+pub fn sys_shmget(key: u32, size: usize, shmflg: u32) -> i32 {
+    syscall3(nr::SHMGET, key as usize, size, shmflg as usize) as i32
+}
+
+/// shmat - Attach a shared memory segment
+pub fn sys_shmat(shmid: i32, shmaddr: usize, shmflg: u32) -> isize {
+    syscall3(nr::SHMAT, shmid as usize, shmaddr, shmflg as usize) as isize
+}
+
+/// shmdt - Detach a shared memory segment
+pub fn sys_shmdt(shmaddr: usize) -> i32 {
+    syscall1(nr::SHMDT, shmaddr) as i32
+}
+
+/// shmctl - Shared memory control operations
+pub fn sys_shmctl(shmid: i32, cmd: u32, buf: usize) -> i32 {
+    syscall3(nr::SHMCTL, shmid as usize, cmd as usize, buf) as i32
+}
+
+// ============ System V Semaphores ============
+
+pub fn sys_semget(key: u32, nsems: usize, semflg: u32) -> i32 {
+    syscall3(nr::SEMGET, key as usize, nsems, semflg as usize) as i32
+}
+
+pub fn sys_semop(semid: i32, sops: usize, nsops: usize) -> i32 {
+    syscall3(nr::SEMOP, semid as usize, sops, nsops) as i32
+}
+
+pub fn sys_semctl(semid: i32, semnum: u32, cmd: u32, arg: usize) -> i32 {
+    syscall4(nr::SEMCTL, semid as usize, semnum as usize, cmd as usize, arg) as i32
+}
+
+// ============ System V Message Queues ============
+
+pub fn sys_msgget(key: u32, msgflg: u32) -> i32 {
+    syscall2(nr::MSGGET, key as usize, msgflg as usize) as i32
+}
+
+pub fn sys_msgsnd(msqid: i32, msgp: usize, msgsz: usize, msgflg: u32) -> i32 {
+    syscall4(nr::MSGSND, msqid as usize, msgp, msgsz, msgflg as usize) as i32
+}
+
+pub fn sys_msgrcv(msqid: i32, msgp: usize, msgsz: usize, msgtyp: i64, msgflg: u32) -> isize {
+    syscall5(nr::MSGRCV, msqid as usize, msgp, msgsz, msgtyp as usize, msgflg as usize) as isize
+}
+
+pub fn sys_msgctl(msqid: i32, cmd: u32, buf: usize) -> i32 {
+    syscall3(nr::MSGCTL, msqid as usize, cmd as usize, buf) as i32
+}
+
+// ============ User/Group ID ============
+
+pub fn sys_getuid() -> u32 { syscall0(nr::GETUID) as u32 }
+pub fn sys_geteuid() -> u32 { syscall0(nr::GETEUID) as u32 }
+pub fn sys_getgid() -> u32 { syscall0(nr::GETGID) as u32 }
+pub fn sys_getegid() -> u32 { syscall0(nr::GETEGID) as u32 }
+pub fn sys_setuid(uid: u32) -> i32 { syscall1(nr::SETUID, uid as usize) as i32 }
+pub fn sys_setgid(gid: u32) -> i32 { syscall1(nr::SETGID, gid as usize) as i32 }
 
 /// sys_kill - Send signal to process
 pub fn sys_kill(pid: i32, sig: i32) -> i32 {

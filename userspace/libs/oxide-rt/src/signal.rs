@@ -89,18 +89,22 @@ pub fn kill(pid: i32, sig: i32) -> i32 {
 /// When the signal handler returns, it falls through to this code which
 /// calls SYS_SIGRETURN to restore the pre-signal context. Without this,
 /// the process would resume execution at garbage addresses.
+///
+/// — GhostPatch: MUST be naked. A non-naked function generates push rbp prologue,
+/// shifting RSP before the syscall. sys_sigreturn uses user_rsp - 8 to find the
+/// SignalFrame, but with the prologue RSP is already decremented — so it reads
+/// from 8 bytes before the frame. saved_rip becomes garbage (usually 0x0).
+/// Result: every signal handler "returns" to address 0. Instant process death.
+/// naked = no prologue = RSP stays where the handler's ret left it. — GhostPatch
+#[unsafe(naked)]
 #[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn __oxide_sigreturn() {
-    unsafe {
-        asm!(
-            "mov rax, {sigreturn_nr}",
-            "syscall",
-            "ud2",
-            sigreturn_nr = const nr::SIGRETURN,
-            options(noreturn),
-        );
-    }
+pub unsafe extern "C" fn __oxide_sigreturn() {
+    core::arch::naked_asm!(
+        "mov rax, {sigreturn_nr}",
+        "syscall",
+        "ud2",
+        sigreturn_nr = const nr::SIGRETURN,
+    );
 }
 
 /// Install a signal handler with proper restorer setup

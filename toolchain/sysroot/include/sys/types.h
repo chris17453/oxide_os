@@ -21,8 +21,10 @@ typedef unsigned long dev_t;
 typedef unsigned long ino_t;
 typedef unsigned long nlink_t;
 typedef long off_t;
+typedef long long off64_t;
 typedef long blksize_t;
 typedef long blkcnt_t;
+typedef long long loff_t;
 
 /* Time */
 typedef long time_t;

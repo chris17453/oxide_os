@@ -351,15 +351,20 @@ pub fn sys_clock_settime(clock_id: i32, tp_ptr: usize) -> i64 {
     }
 
     // Read the timespec from userspace
-    let ts_sec: i64;
-    let ts_nsec: i64;
-    unsafe {
+    // — SableWire: byte-copy from userspace — never read_volatile on user ptrs (alignment panic)
+    let ts: Timespec = unsafe {
+        let mut val = core::mem::MaybeUninit::<Timespec>::uninit();
         os_core::user_access_begin();
-        let ptr = tp_ptr as *const i64;
-        ts_sec = core::ptr::read_volatile(ptr);
-        ts_nsec = core::ptr::read_volatile(ptr.add(1));
+        core::ptr::copy_nonoverlapping(
+            tp_ptr as *const u8,
+            val.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<Timespec>(),
+        );
         os_core::user_access_end();
-    }
+        val.assume_init()
+    };
+    let ts_sec = ts.tv_sec;
+    let ts_nsec = ts.tv_nsec;
 
     if ts_sec < 0 || ts_nsec < 0 || ts_nsec >= 1_000_000_000 {
         return -22; // EINVAL
@@ -472,13 +477,13 @@ pub fn sys_clock_gettime(clock_id: i32, tp_ptr: usize) -> i64 {
 
     // Write to userspace
     unsafe {
-        // Enable SMAP access
+        // — SableWire: byte-copy to userspace — copy_nonoverlapping handles alignment + is optimizer-opaque
         os_core::user_access_begin();
-
-        let tp = tp_ptr as *mut Timespec;
-        core::ptr::write_volatile(tp, ts);
-
-        // Disable SMAP access
+        core::ptr::copy_nonoverlapping(
+            &ts as *const Timespec as *const u8,
+            tp_ptr as *mut u8,
+            core::mem::size_of::<Timespec>(),
+        );
         os_core::user_access_end();
     }
 
@@ -516,9 +521,13 @@ pub fn sys_clock_getres(clock_id: i32, res_ptr: usize) -> i64 {
     };
 
     unsafe {
+        // — SableWire: byte-copy to userspace — alignment-safe + optimizer-opaque
         os_core::user_access_begin();
-        let rp = res_ptr as *mut Timespec;
-        core::ptr::write_volatile(rp, res);
+        core::ptr::copy_nonoverlapping(
+            &res as *const Timespec as *const u8,
+            res_ptr as *mut u8,
+            core::mem::size_of::<Timespec>(),
+        );
         os_core::user_access_end();
     }
 
@@ -539,9 +548,13 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
+            // — SableWire: byte-copy to userspace — alignment-safe + optimizer-opaque
             os_core::user_access_begin();
-            let tvp = tv_ptr as *mut Timeval;
-            core::ptr::write_volatile(tvp, tv);
+            core::ptr::copy_nonoverlapping(
+                &tv as *const Timeval as *const u8,
+                tv_ptr as *mut u8,
+                core::mem::size_of::<Timeval>(),
+            );
             os_core::user_access_end();
         }
     }
@@ -554,9 +567,13 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
+            // — SableWire: byte-copy to userspace — alignment-safe + optimizer-opaque
             os_core::user_access_begin();
-            let tzp = tz_ptr as *mut Timezone;
-            core::ptr::write_volatile(tzp, tz);
+            core::ptr::copy_nonoverlapping(
+                &tz as *const Timezone as *const u8,
+                tz_ptr as *mut u8,
+                core::mem::size_of::<Timezone>(),
+            );
             os_core::user_access_end();
         }
     }
@@ -574,13 +591,17 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Read requested time from userspace
+    // — SableWire: byte-copy from userspace — copy_nonoverlapping handles alignment + is optimizer-opaque
     let req: Timespec = unsafe {
+        let mut val = core::mem::MaybeUninit::<Timespec>::uninit();
         os_core::user_access_begin();
-        let rp = req_ptr as *const Timespec;
-        let val = core::ptr::read_volatile(rp);
+        core::ptr::copy_nonoverlapping(
+            req_ptr as *const u8,
+            val.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<Timespec>(),
+        );
         os_core::user_access_end();
-        val
+        val.assume_init()
     };
 
     // Validate
@@ -634,9 +655,13 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
                 };
 
                 unsafe {
+                    // — SableWire: byte-copy to userspace — alignment-safe + optimizer-opaque
                     os_core::user_access_begin();
-                    let rp = rem_ptr as *mut Timespec;
-                    core::ptr::write_volatile(rp, rem);
+                    core::ptr::copy_nonoverlapping(
+                        &rem as *const Timespec as *const u8,
+                        rem_ptr as *mut u8,
+                        core::mem::size_of::<Timespec>(),
+                    );
                     os_core::user_access_end();
                 }
             }
@@ -675,9 +700,13 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         };
 
         unsafe {
+            // — SableWire: byte-copy to userspace — alignment-safe + optimizer-opaque
             os_core::user_access_begin();
-            let rp = rem_ptr as *mut Timespec;
-            core::ptr::write_volatile(rp, rem);
+            core::ptr::copy_nonoverlapping(
+                &rem as *const Timespec as *const u8,
+                rem_ptr as *mut u8,
+                core::mem::size_of::<Timespec>(),
+            );
             os_core::user_access_end();
         }
     }
@@ -712,12 +741,17 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
             return errno::EFAULT;
         }
 
+        // — SableWire: byte-copy from userspace — alignment-safe + optimizer-opaque
         let req: Timespec = unsafe {
+            let mut val = core::mem::MaybeUninit::<Timespec>::uninit();
             os_core::user_access_begin();
-            let rp = req_ptr as *const Timespec;
-            let val = core::ptr::read_volatile(rp);
+            core::ptr::copy_nonoverlapping(
+                req_ptr as *const u8,
+                val.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<Timespec>(),
+            );
             os_core::user_access_end();
-            val
+            val.assume_init()
         };
 
         // Get current time for this clock

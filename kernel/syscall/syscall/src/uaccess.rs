@@ -102,45 +102,62 @@ pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), i64> {
 // Typed scalar helpers
 // ============================================================================
 
-/// Read a `T` from a userspace pointer via `read_volatile`.
+/// Read a `T` from a userspace pointer via byte-level copy.
 ///
-/// — ColdCipher: Volatile because the compiler must not cache the read or
-/// reorder it outside the STAC/CLAC window. Without volatile the optimizer
-/// could legally move the load before STAC — that's an SMAP bypass in disguise.
+/// — ColdCipher: Linux's get_user() uses inline asm with exception tables.
+/// We can't do that in safe-ish Rust, so we use copy_nonoverlapping — the
+/// memcpy intrinsic. It handles arbitrary alignment (userspace doesn't owe
+/// us aligned pointers), and as a compiler intrinsic it's opaque to the
+/// optimizer — the copy cannot migrate outside the STAC/CLAC window.
+/// read_volatile panics on misaligned pointers (Rust UB checks), so we
+/// must never use it on userspace-sourced pointers.
 ///
-/// Returns `Err(errno::EFAULT)` if the pointer fails alignment/bounds checks.
+/// Returns `Err(errno::EFAULT)` if the pointer fails bounds checks.
 pub fn get_user<T: Copy>(ptr: u64) -> Result<T, i64> {
     let size = core::mem::size_of::<T>();
     if !validate_user_buffer(ptr, size) {
         return Err(errno::EFAULT);
     }
     // Safety: validate_user_buffer confirmed the range is in userspace.
-    // read_volatile prevents the load from migrating outside the STAC/CLAC fence.
+    // MaybeUninit<T> on the stack is properly aligned for T.
+    // copy_nonoverlapping does a byte-level copy — no alignment requirement
+    // on the source pointer — and is opaque to the optimizer.
     unsafe {
+        let mut val = core::mem::MaybeUninit::<T>::uninit();
         os_core::user_access_begin();
-        let val = core::ptr::read_volatile(ptr as *const T);
+        core::ptr::copy_nonoverlapping(
+            ptr as *const u8,
+            val.as_mut_ptr() as *mut u8,
+            size,
+        );
         os_core::user_access_end();
-        Ok(val)
+        Ok(val.assume_init())
     }
 }
 
-/// Write a `T` to a userspace pointer via `write_volatile`.
+/// Write a `T` to a userspace pointer via byte-level copy.
 ///
-/// — ColdCipher: Same volatile requirement as get_user — the compiler must
-/// not sink the store past CLAC. If it did, we'd write user memory with SMAP
-/// active and take a spurious #PF in the kernel. Not fun. Volatile prevents it.
+/// — ColdCipher: Mirror of get_user — uses copy_nonoverlapping instead of
+/// write_volatile to handle misaligned userspace pointers without panicking.
+/// The intrinsic is opaque to the optimizer so the store stays inside the
+/// STAC/CLAC window.
 ///
-/// Returns `Err(errno::EFAULT)` if the pointer fails alignment/bounds checks.
+/// Returns `Err(errno::EFAULT)` if the pointer fails bounds checks.
 pub fn put_user<T: Copy>(ptr: u64, val: T) -> Result<(), i64> {
     let size = core::mem::size_of::<T>();
     if !validate_user_buffer(ptr, size) {
         return Err(errno::EFAULT);
     }
     // Safety: validate_user_buffer confirmed the range is in userspace.
-    // write_volatile prevents the store from migrating outside the STAC/CLAC fence.
+    // We take a reference to val on the stack (properly aligned), then
+    // copy_nonoverlapping byte-copies it to the (possibly unaligned) dest.
     unsafe {
         os_core::user_access_begin();
-        core::ptr::write_volatile(ptr as *mut T, val);
+        core::ptr::copy_nonoverlapping(
+            &val as *const T as *const u8,
+            ptr as *mut u8,
+            size,
+        );
         os_core::user_access_end();
         Ok(())
     }

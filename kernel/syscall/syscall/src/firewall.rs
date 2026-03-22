@@ -224,11 +224,18 @@ pub fn sys_fw_add_rule(rule_ptr: VirtAddr) -> i64 {
 
     // Read rule from userspace with SMAP brackets
     // — ColdCipher: STAC before, CLAC after. The holy sacrament of user pointer access.
+    // — ColdCipher: FwRule from user pointer — alignment is a fairy tale.
+    // copy_nonoverlapping reads the struct without alignment demands.
     let rule_data = unsafe {
         os_core::user_access_begin();
-        let val = core::ptr::read_volatile(rule_ptr.as_ptr::<FwRule>());
+        let mut val = core::mem::MaybeUninit::<FwRule>::uninit();
+        core::ptr::copy_nonoverlapping(
+            rule_ptr.as_u64() as *const u8,
+            val.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<FwRule>(),
+        );
         os_core::user_access_end();
-        val
+        val.assume_init()
     };
 
     // Convert and add rule
@@ -389,9 +396,15 @@ pub fn sys_fw_get_conntrack(stats_ptr: VirtAddr) -> i64 {
         };
 
         // — ColdCipher: STAC/CLAC bracket for writing to user memory.
+        // — ColdCipher: ConntrackStats to user buffer — byte-copy because
+        // user pointers and alignment are mortal enemies.
         unsafe {
             os_core::user_access_begin();
-            core::ptr::write_volatile(stats_ptr.as_mut_ptr::<ConntrackStats>(), stats);
+            core::ptr::copy_nonoverlapping(
+                &stats as *const ConntrackStats as *const u8,
+                stats_ptr.as_u64() as *mut u8,
+                core::mem::size_of::<ConntrackStats>(),
+            );
             os_core::user_access_end();
         }
     }

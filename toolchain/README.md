@@ -34,11 +34,14 @@ sudo make install-toolchain
 export OXIDE_TOOLCHAIN=$(pwd)/toolchain
 export PATH=$OXIDE_TOOLCHAIN/bin:$PATH
 
-# Compile a C program
+# Compile a C program (static linking, default)
 oxide-cc -o hello hello.c
 
 # Link with libraries
 oxide-cc -o app main.c -lm
+
+# Compile with dynamic linking (links against libc.so via ld-oxide.so.1)
+oxide-cc -dynamic -o hello hello.c
 
 # Create a static library
 oxide-ar rcs libmylib.a obj1.o obj2.o
@@ -183,7 +186,7 @@ Planned:
 
 Current limitations (to be addressed):
 - C++ standard library not yet available
-- Dynamic linking not supported (static binaries only)
+- Dynamic linking available via `oxide-cc -dynamic` (links against libc.so via ld-oxide.so.1)
 - No Fortran/Go/other language support yet
 
 ## Troubleshooting

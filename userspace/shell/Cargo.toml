@@ -4,9 +4,19 @@ version = "0.1.0"
 edition = "2024"
 description = "OXIDE Shell (esh)"
 
+[lib]
+name = "esh"
+path = "src/lib.rs"
+
 [[bin]]
 name = "esh"
 path = "src/main.rs"
 
+[features]
+debug-shell = []
+# — ByteRiot: oxide-libc only needed for the binary, not the testable lib
+oxide-libc = ["dep:libc"]
+default = ["oxide-libc"]
+
 [dependencies]
-libc = { path = "../libs/libc" }
+libc = { path = "../libs/libc", optional = true }

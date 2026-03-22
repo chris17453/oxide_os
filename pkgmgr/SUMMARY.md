@@ -254,7 +254,7 @@ Packages can be integrated into the OXIDE initramfs:
 2. **RPM Features**: Limited macro expansion in spec files
 3. **Security**: No GPG signature verification yet
 4. **Parallelism**: Single-threaded builds
-5. **Dynamic Linking**: Limited support (focus on static linking)
+5. **Dynamic Linking**: Supported — shared .so libraries built automatically from .a archives; `OXIDE_LINK_MODE=dynamic` enables shared linking in the builder; `oxide-cc -dynamic` produces dynamically-linked executables
 
 ### Planned Enhancements
 

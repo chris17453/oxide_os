@@ -1575,7 +1575,10 @@ pub fn kernel_exec(
     }
 
     // Scan all program headers to find the maximum file offset we need to read
+    // — BlackLatch: also detect PT_INTERP (type=3) for dynamic linking
     let mut max_file_extent: usize = ph_table_end; // at minimum, need the headers
+    let mut interp_offset: usize = 0;
+    let mut interp_size: usize = 0;
     for i in 0..e_phnum {
         let ph_start = i * e_phentsize;
         if ph_start + 56 > ph_buf.len() {
@@ -1589,6 +1592,17 @@ pub fn kernel_exec(
 
         // PT_LOAD=1, PT_TLS=7 — these are the only segment types we need file data for
         if (p_type == 1 || p_type == 7) && p_filesz > 0 {
+            let extent = p_offset + p_filesz;
+            if extent > max_file_extent {
+                max_file_extent = extent;
+            }
+        }
+
+        // — BlackLatch: PT_INTERP (type=3) — record offset+size of interpreter path
+        if p_type == 3 && p_filesz > 0 {
+            interp_offset = p_offset;
+            interp_size = p_filesz;
+            // — BlackLatch: also need the interp path bytes in the read range
             let extent = p_offset + p_filesz;
             if extent > max_file_extent {
                 max_file_extent = extent;
@@ -1633,11 +1647,68 @@ pub fn kernel_exec(
     // — GraveShift: trace read completion
     unsafe { os_log::write_str_raw("[EXEC] read done, calling do_exec\n"); }
 
+    // — BlackLatch: if PT_INTERP was found, read the interpreter path from the ELF
+    // data we just loaded, then look up the interpreter in VFS and read it.
+    let interp_data_opt: Option<alloc::vec::Vec<u8>> = if interp_size > 0 && interp_offset + interp_size <= elf_data.len() {
+        // Extract interpreter path (null-terminated)
+        let raw_path = &elf_data[interp_offset..interp_offset + interp_size];
+        let path_len = raw_path.iter().position(|&b| b == 0).unwrap_or(raw_path.len());
+        if let Ok(interp_path) = core::str::from_utf8(&raw_path[..path_len]) {
+            unsafe {
+                os_log::write_str_raw("[EXEC] PT_INTERP: ");
+                os_log::write_str_raw(interp_path);
+                os_log::write_str_raw("\n");
+            }
+
+            // Look up the interpreter in VFS
+            match GLOBAL_VFS.lookup(interp_path) {
+                Ok(interp_vnode) => {
+                    let isize = interp_vnode.size() as usize;
+                    if isize >= 64 && isize < 4 * 1024 * 1024 {
+                        // — BlackLatch: interpreters are small (ld-oxide.so is ~6KB).
+                        // Cap at 4MB to prevent absurd reads.
+                        let mut ibuf = alloc::vec![0u8; isize];
+                        match interp_vnode.read(0, &mut ibuf) {
+                            Ok(n) if n >= 64 => {
+                                // Validate it's an ELF
+                                if ibuf[0..4] == [0x7f, b'E', b'L', b'F'] {
+                                    Some(ibuf)
+                                } else {
+                                    unsafe { os_log::write_str_raw("[EXEC] interpreter not ELF\n"); }
+                                    None
+                                }
+                            }
+                            _ => {
+                                unsafe { os_log::write_str_raw("[EXEC] interpreter read failed\n"); }
+                                None
+                            }
+                        }
+                    } else {
+                        unsafe { os_log::write_str_raw("[EXEC] interpreter size invalid\n"); }
+                        None
+                    }
+                }
+                Err(_) => {
+                    // — BlackLatch: interpreter not found on filesystem. Not fatal for
+                    // backward compat — exec proceeds without interpreter (main exe runs
+                    // directly). Dynamically-linked binaries will crash at first PLT call
+                    // but at least the system doesn't refuse to run them.
+                    unsafe { os_log::write_str_raw("[EXEC] interpreter not found, running direct\n"); }
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Get kernel PML4 for creating new address space
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
 
     // Call do_exec - returns ExecResult with new address space and context
-    match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4) {
+    match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4, interp_data_opt.as_deref()) {
         Ok(exec_result) => {
             unsafe { os_log::write_str_raw("[EXEC] do_exec OK\n"); }
             // Get new address space PML4
@@ -1907,6 +1978,8 @@ pub fn kernel_exec(
                 proc::ExecError::ProcessNotFound => "ProcessNotFound",
                 proc::ExecError::InvalidAddress => "InvalidAddress",
                 proc::ExecError::InvalidArgument => "InvalidArgument",
+                proc::ExecError::InterpreterNotFound => "InterpreterNotFound",
+                proc::ExecError::InvalidInterpreter => "InvalidInterpreter",
             }); }
             unsafe { os_log::write_str_raw("\n"); }
             let code = match e {
@@ -1929,6 +2002,14 @@ pub fn kernel_exec(
                 proc::ExecError::InvalidArgument => {
                     debug_fork!("[EXEC] Error: InvalidArgument");
                     -22 // EINVAL
+                }
+                proc::ExecError::InterpreterNotFound => {
+                    debug_fork!("[EXEC] Error: InterpreterNotFound");
+                    -2 // ENOENT
+                }
+                proc::ExecError::InvalidInterpreter => {
+                    debug_fork!("[EXEC] Error: InvalidInterpreter");
+                    -8 // ENOEXEC
                 }
             };
             code

@@ -1,7 +1,7 @@
 # — CrashBloom: Test, lint, and quality gates.
 # If it compiles but doesn't pass here, it doesn't ship. Period.
 
-.PHONY: test test-kernel check fmt fmt-check clippy clean
+.PHONY: test test-kernel test-shell check fmt fmt-check clippy clean
 
 # Automated test: boot and check for expected output
 test: create-rootfs
@@ -116,6 +116,13 @@ test-kernel: create-rootfs
 # Quick syntax and type check
 check:
 	cargo check --all-targets
+
+# — CrashBloom: host-side shell unit tests — tokenizer, parser, AST
+# Runs on the host without QEMU — fast, deterministic, no kernel needed
+test-shell:
+	@echo "Running shell unit tests (host)..."
+	cargo test -p esh --lib --no-default-features --target x86_64-unknown-linux-gnu
+	@echo "=== Shell unit tests passed ==="
 
 # Format code
 fmt:
